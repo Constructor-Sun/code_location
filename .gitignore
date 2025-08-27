@@ -1,0 +1,15 @@
+# do not include certain dirs
+czlll/
+Qwen/
+SWE-bench/
+embeddings/
+index_data/
+playground/
+plots/
+train_index/
+
+# do not include log files
+*.log
+*.log.*
+log/
+logs/
