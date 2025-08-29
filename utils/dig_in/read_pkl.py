@@ -19,7 +19,7 @@ def read_pkl_file(file_path):
             print("\n前几个节点（最多 5 个）：")
             nodes = list(data.nodes(data=True))[:5]  # 获取节点及其属性
             for node, attrs in nodes:
-                print(f"节点: {node}, 属性: {attrs}")
+                print(f"节点: {node}, 属性: {attrs} \n")
             
             # 打印前几条边（最多 5 条）
             print("\n前几条边（最多 5 条）：")
@@ -38,5 +38,5 @@ def read_pkl_file(file_path):
         return None
 
 # 替换为你的文件路径
-file_path = 'train_index/SWE-smith/graph_index_v1.0/swesmith.x86_64.adrienverge_1776_yamllint.8513d9b9.pkl'  # 根据你的文件路径调整
+file_path = 'train_index/SWE-smith/graph_index_v1.0/swesmith.x86_64.catchorg_1776_catch2.9b3f508a.pkl'  # 根据你的文件路径调整
 data = read_pkl_file(file_path)
