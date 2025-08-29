@@ -14,7 +14,7 @@ def get_filenames_in_dir(directory_path):
     filenames = []
     for filename in os.listdir(directory_path):
         if os.path.isfile(os.path.join(directory_path, filename)):
-            filenames.append(filename.split(".")[0])
+            filenames.append(filename.rsplit('.', 1)[0])
     return filenames
 
 def embed_text_batch(tokenizer, model, texts):

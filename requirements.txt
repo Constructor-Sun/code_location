@@ -8,3 +8,4 @@ datasets>=2.12
 torch-geometric>=2.3
 pathlib>=1.0
 huggingface-hub>=0.15
+unidiff

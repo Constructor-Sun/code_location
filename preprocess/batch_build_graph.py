@@ -70,40 +70,40 @@ if __name__ == '__main__':
                         help='The base directory where the generated graph index will be saved.')
     parser.add_argument('--instance_id_path', type=str, default='', 
                         help='Path to a file containing a list of selected instance IDs.')
-    parser.add_argument('--reduce', action='store_true', 
-                        help='Whether to deduplicate the repo downloading')
+    parser.add_argument('--train', action='store_true', 
+                        help='Whether to build graphs for trainning dataset')
     args = parser.parse_args()
 
     
     dataset_name = args.dataset.split('/')[-1]
     args.index_dir = f'{args.index_dir}/{dataset_name}/graph_index_{VERSION}/'
     os.makedirs(args.index_dir, exist_ok=True)
-        
+    
     # load selected repo instance id and instance_data
-    if args.reduce:
+    if args.train:
         if args.download_repo:
             selected_instance_data = {}
             bench_data = load_dataset(args.dataset, split=args.split)
             prefix_set = set()  # 用于存储唯一的前缀
 
             if args.instance_id_path and osp.exists(args.instance_id_path):
-                print("instance_id list loaded successfully!")
+                print("repo list loaded successfully!")
                 with open(args.instance_id_path, 'r') as f:
                     repo_folders = json.loads(f.read())
                 for instance in bench_data:
-                    if instance['instance_id'] in repo_folders:
-                        prefix = get_prefix(instance['instance_id'])
+                    if instance['repo'] in repo_folders:
+                        prefix = get_prefix(instance['repo'])
                         if prefix not in prefix_set:
                             prefix_set.add(prefix)
-                            selected_instance_data[instance['instance_id']] = instance
+                            selected_instance_data[instance['repo']] = instance
             else:
                 repo_folders = []
                 for instance in bench_data:
-                    prefix = get_prefix(instance['instance_id'])
+                    prefix = get_prefix(instance['repo'])
                     if prefix not in prefix_set:
                         prefix_set.add(prefix)
-                        repo_folders.append(instance['instance_id'])
-                        selected_instance_data[instance['instance_id']] = instance
+                        repo_folders.append(instance['repo'])
+                        selected_instance_data[instance['repo']] = instance
         else:
             if args.instance_id_path and osp.exists(args.instance_id_path):
                 with open(args.instance_id_path, 'r') as f:
