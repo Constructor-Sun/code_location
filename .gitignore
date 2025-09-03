@@ -13,5 +13,6 @@ saved_models/
 # do not include log files
 *.log
 *.log.*
+*.json
 log/
 logs/

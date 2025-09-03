@@ -3,23 +3,25 @@ import json
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch_geometric.data import Batch
-from torch.utils.data import DataLoader
+from tqdm import tqdm
+from torch_geometric.nn import DataParallel # , DistributedDataParallel
+from torch_geometric.loader import DataListLoader
+from dataset import GraphDataset
 from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
 import torch.nn.functional as F
 from sklearn.metrics import precision_recall_fscore_support
 
-def graph_collate_fn(batch):
-    queries, categories, graph_data_list = zip(*batch)
+# def graph_collate_fn(batch):
+#     queries, categories, graph_data_list = zip(*batch)
     
-    batch_graph = Batch.from_data_list(graph_data_list)
-    queries = torch.tensor(queries)
-    categories = torch.tensor(categories)
+#     batch_graph = Batch.from_data_list(graph_data_list)
+#     queries = torch.tensor(queries)
+#     categories = torch.tensor(categories)
     
-    return queries, categories, batch_graph
+#     return queries, categories, batch_graph
 
 class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
+    def __init__(self, alpha=0.8, gamma=2.0, reduction='mean'):
         """
         Focal Loss for imbalanced datasets.
         
@@ -50,12 +52,14 @@ class GCNReasonerTrainer:
         model,
         data_list,
         graph_embedding,
+        num_classes=2,
         optimizer_name="Adam",
         lr=0.001,
         scheduler_name="ReduceLROnPlateau",
         scheduler_params=None,
         batch_size=16,
         epochs=10,
+        log_file=None,
         device="cuda" if torch.cuda.is_available() else "cpu",
         focal_loss_params=None
     ):
@@ -80,11 +84,13 @@ class GCNReasonerTrainer:
         self.batch_size = batch_size
         self.epochs = epochs
         self.device = device
+        self.log_file = log_file
+        self.num_classes = num_classes
 
         # Move model to device(s)
         if self.device == "cuda" and torch.cuda.device_count() > 1:
             print(f"Using {torch.cuda.device_count()} GPUs")
-            self.model = nn.DataParallel(self.model)
+            self.model = DataParallel(self.model)
         self.model = self.model.to(device)
 
         # Initialize optimizer
@@ -101,8 +107,9 @@ class GCNReasonerTrainer:
             self.scheduler = None
 
         # Initialize focal loss
-        focal_loss_params = focal_loss_params or {'alpha': 0.25, 'gamma': 2.0}
-        self.criterion = FocalLoss(**focal_loss_params)
+        # focal_loss_params = focal_loss_params or {'alpha': 0.25, 'gamma': 2.0}
+        # self.criterion = FocalLoss(**focal_loss_params)
+        self.criterion = nn.KLDivLoss(reduction='batchmean')
 
         # Initialize metrics storage
         self.training_metrics = []
@@ -148,7 +155,7 @@ class GCNReasonerTrainer:
 
     def train(self):
         """
-        Train the GCNReasoner model and log loss and precision.
+        Train the GCNReasoner model, log loss and precision, and save the model.
         
         Returns:
             List of average epoch losses
@@ -156,30 +163,39 @@ class GCNReasonerTrainer:
         self.model.train()
         losses = []
 
-        # Create dataset from data_list
-        dataset = []
-        for query, category, pt_path in zip(self.data_list['x'], self.data_list['y'], self.data_list['image']):
-            graph_data = self.load_graph(os.path.join(self.graph_embedding, pt_path + '.pt'))
-            dataset.append((query, category, graph_data))
+        # Create custom dataset for lazy loading
+        dataset = GraphDataset(
+            queries=self.data_list['x'],
+            categories=self.data_list['y'],
+            pt_paths=self.data_list['image'],
+            graph_embedding=self.graph_embedding
+        )
 
-        data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True, collate_fn=graph_collate_fn)
+        # Use torch_geometric.loader.DataLoader
+        data_loader = DataListLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
-        for epoch in range(self.epochs):
+        epoch_pbar = tqdm(range(self.epochs), desc="Training", unit="epoch")
+
+        for epoch in epoch_pbar:
             epoch_loss = 0.0
             all_preds = []
             all_labels = []
+            batch_pbar = tqdm(data_loader, desc=f"Epoch {epoch+1}/{self.epochs}", 
+                         leave=False, unit="batch")
 
-            for batch in data_loader:
+            for batch_idx, batchs in enumerate(batch_pbar):
                 self.optimizer.zero_grad()
 
-                # Unpack batch
-                query, category, graph_data = batch
-                query = query.to(self.device)
-                category = category.to(self.device)
-                graph_data = graph_data.to(self.device)
+                # Move batch to device
+                # Extract query, category, and graph data
+                category = [data.category for data in batchs]
+                ori_category = torch.cat(category)
+                category = F.one_hot(ori_category, num_classes=self.num_classes).cuda()
+                category = category / category.sum(dim=1, keepdim=True)
 
                 # Forward pass
-                output = self.model(graph_data.x, graph_data.edge_index, query)
+                output = self.model(batchs)
+                output = F.log_softmax(output, dim=-1)
                 loss = self.criterion(output, category)
 
                 # Backward pass
@@ -188,15 +204,23 @@ class GCNReasonerTrainer:
 
                 epoch_loss += loss.item()
 
+                current_loss = loss.item()
+                batch_pbar.set_postfix({
+                    'loss': f'{current_loss:.4f}',
+                    'avg_loss': f'{epoch_loss/(batch_idx+1):.4f}'
+                })
+
                 # Collect predictions and labels for precision
                 pred = output.argmax(dim=1).cpu().numpy()
-                labels = category.cpu().numpy()
+                labels = ori_category.cpu().numpy()
                 all_preds.extend(pred)
                 all_labels.extend(labels)
 
                 # Update scheduler if applicable
                 if self.scheduler and isinstance(self.scheduler, ReduceLROnPlateau):
-                    self.scheduler.step(loss)
+                    self.scheduler.step(loss.item())
+
+                torch.cuda.empty_cache()
 
             # Average loss for the epoch
             avg_loss = epoch_loss / len(data_loader)
@@ -214,8 +238,9 @@ class GCNReasonerTrainer:
             if self.scheduler and not isinstance(self.scheduler, ReduceLROnPlateau):
                 self.scheduler.step()
 
-        # Save metrics to file
-        self.save_metrics()
+            # Save metrics and model
+            self.save_metrics()
+            self.save_checkpoint()
 
         return losses
 
@@ -224,7 +249,7 @@ class GCNReasonerTrainer:
         Evaluate the model on test data.
         
         Args:
-            test_data_list: List of tuples (query_vector, category_vector, graph_pt_path)
+            test_data_list: Dict with keys 'x' (queries), 'y' (categories), 'image' (pt_paths)
         
         Returns:
             float: Average test loss
@@ -235,21 +260,30 @@ class GCNReasonerTrainer:
         all_preds = []
         all_labels = []
 
-        dataset = []
-        for query, category, pt_path in test_data_list:
-            graph_data = self.load_graph(pt_path)
-            dataset.append((query, category, graph_data))
+        # Create custom dataset for lazy loading
+        dataset = GraphDataset(
+            queries=test_data_list['x'],
+            categories=test_data_list['y'],
+            pt_paths=test_data_list['image'],
+            graph_embedding=self.graph_embedding
+        )
 
-        data_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False)
+        # Use torch_geometric.loader.DataLoader
+        data_loader = DataListLoader(dataset, batch_size=self.batch_size, shuffle=False)
 
         with torch.no_grad():
             for batch in data_loader:
-                query, category, graph_data = batch
-                query = query.to(self.device)
-                category = category.to(self.device)
-                graph_data = graph_data.to(self.device)
+                # Move batch to device
+                batch = batch.to(self.device)
 
-                output = self.model(graph_data.x, graph_data.edge_index, query)
+                # Extract query, category, and graph data
+                query = batch.query
+                category = batch.category
+                x = batch.x
+                edge_index = batch.edge_index
+
+                # Forward pass
+                output = self.model(x, edge_index, query)
                 loss = self.criterion(output, category)
                 total_loss += loss.item()
 
@@ -282,24 +316,32 @@ class GCNReasonerTrainer:
             reason: String identifier for the checkpoint (default: "h1")
         """
         checkpoint = {
-            'model_state_dict': (self.model.module if isinstance(self.model, nn.DataParallel) else self.model).state_dict()
+            'model': self.model,
+            'optimizer': self.optimizer,
+            'scheduler': self.scheduler,
+            'epoch': self.epochs
         }
         model_name = os.path.join(self.checkpoint_dir, f"{self.experiment_name}-{reason}.ckpt")
         torch.save(checkpoint, model_name)
         print(f"Best {reason}, save model as {model_name}")
 
-    def load_checkpoint(self, filename):
+    @classmethod
+    def load_checkpoint(cls, path, device='cpu'):
         """
-        Load a checkpoint from a file.
+        Load a checkpoint and create a Trainer instance.
         
         Args:
-            filename: Path to the checkpoint file
-        """
-        checkpoint = torch.load(filename)
-        model_state_dict = checkpoint["model_state_dict"]
+            path (str): File path to load the checkpoint from (e.g., 'checkpoint.pth')
+            device (str): Device to load the model to ('cpu' or 'cuda')
         
-        # Handle DataParallel case
-        model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
-        model.load_state_dict(model_state_dict, strict=False)
-        model.to(self.device)
-        print(f"Loaded checkpoint from {filename}")
+        Returns:
+            Trainer: Loaded Trainer instance
+        """
+        checkpoint = torch.load(path, map_location=device)
+        model = checkpoint['model']
+        optimizer = checkpoint['optimizer']
+        trainer = cls(model, optimizer, device)
+        trainer.epoch = checkpoint['epoch']
+        trainer.model.eval()
+        print(f"Checkpoint loaded from {path}, epoch {trainer.epoch}")
+        return trainer

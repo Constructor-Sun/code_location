@@ -17,17 +17,17 @@ def get_filenames_in_dir(directory_path):
             filenames.append(filename.rsplit('.', 1)[0])
     return filenames
 
-def embed_text_batch(tokenizer, model, texts):
-    inputs = tokenizer(texts, return_tensors="pt", truncation=True, max_length=4096, padding="longest")
+def embed_text_batch(tokenizer, model, texts, max_length):
+    inputs = tokenizer(texts, return_tensors="pt", truncation=True, max_length=max_length, padding="longest")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     with torch.no_grad():
-        embeddings = model(**inputs).last_hidden_state.mean(dim=1)  # [batch_size, embedding_dim]
+        embeddings = model(**inputs).last_hidden_state  # [batch_size, max_length, embedding_dim]
     return embeddings.cpu().numpy()
 
-def embed_codes(tokenizer, model, graph, batch_size=16):
+def embed_codes(tokenizer, model, graph, batch_size=16, max_length=1024):
     node_ids = list(graph.nodes)
     embedding_dim = model.config.hidden_size  # Get embedding dimension from model
-    embeddings = np.empty((len(node_ids), embedding_dim), dtype=np.float32)
+    embeddings = np.empty((len(node_ids), max_length, embedding_dim), dtype=np.float32)
     
     indices_and_lengths = [(i, len(tokenizer.encode(graph.nodes[node].get('code', node), add_special_tokens=False))) 
                            for i, node in enumerate(node_ids)]
@@ -39,7 +39,7 @@ def embed_codes(tokenizer, model, graph, batch_size=16):
         for i in range(0, len(node_ids), batch_size):
             batch_indices = sorted_indices[i:i + batch_size]
             batch_texts = [graph.nodes[node_ids[idx]].get('code', node_ids[idx]) for idx in batch_indices]
-            batch_embeddings = embed_text_batch(tokenizer, model, batch_texts)
+            batch_embeddings = embed_text_batch(tokenizer, model, batch_texts, max_length)
             for j, idx in enumerate(batch_indices):
                 embeddings[idx] = batch_embeddings[j]
             torch.cuda.empty_cache()  # Clear cache after each batch
@@ -47,6 +47,40 @@ def embed_codes(tokenizer, model, graph, batch_size=16):
     for i, node in enumerate(node_ids):
         graph.nodes[node]['embedding'] = embeddings[i]
     return graph
+
+# def embed_text_batch(tokenizer, model, texts, max_length=1024):
+#     inputs = tokenizer(texts, return_tensors="pt", truncation=True, max_length=max_length, padding="longest")
+#     inputs = {k: v.to(model.device) for k, v in inputs.items()}
+#     with torch.no_grad():
+#         embeddings = model(**inputs).last_hidden_state  # [batch_size, max_length, embedding_dim]
+#     return embeddings.cpu().numpy(), inputs['attention_mask'].cpu().astype(np.bool_)
+
+# def embed_codes(tokenizer, model, graph, batch_size=16, max_length=1024):
+#     node_ids = list(graph.nodes)
+#     embedding_dim = model.config.hidden_size  # Get embedding dimension from model
+#     embeddings = np.empty((len(node_ids), max_length, embedding_dim), dtype=np.float32)
+#     masks = np.empty((len(node_ids), max_length), dtype=np.bool_)
+    
+#     indices_and_lengths = [(i, len(tokenizer.encode(graph.nodes[node].get('code', node), add_special_tokens=False))) 
+#                            for i, node in enumerate(node_ids)]
+#     indices_and_lengths.sort(key=lambda x: x[1])
+#     sorted_indices = [idx for idx, _ in indices_and_lengths]
+    
+#     model.eval()
+#     with torch.no_grad():
+#         for i in range(0, len(node_ids), batch_size):
+#             batch_indices = sorted_indices[i:i + batch_size]
+#             batch_texts = [graph.nodes[node_ids[idx]].get('code', node_ids[idx]) for idx in batch_indices]
+#             batch_embeddings, batch_masks = embed_text_batch(tokenizer, model, batch_texts, max_length)
+#             for j, idx in enumerate(batch_indices):
+#                 embeddings[idx] = batch_embeddings[j]
+#                 masks[idx] = batch_masks[j]
+#             torch.cuda.empty_cache()  # Clear cache after each batch
+    
+#     for i, node in enumerate(node_ids):
+#         graph.nodes[node]['embedding'] = embeddings[i]
+#         graph.nodes[node]['mask'] = masks[i]
+#     return graph
 
 def embed_graph_single_process(graph_dir, graph_filename, save_dir, tokenizer, model, batch_size):
     """graph embedding in one process"""
@@ -58,8 +92,11 @@ def embed_graph_single_process(graph_dir, graph_filename, save_dir, tokenizer, m
         node_ids = list(graph.nodes)
         node_type = [NODE_TYPE_MAPPING.get(graph.nodes[n]['type'], -1) for n in node_ids] # [num_nodes]
         embeddings_list = [graph.nodes[n]['embedding'] for n in node_ids]
+        mask_list = [graph.nodes[n]['mask'] for n in node_ids]
         node_embedding = np.vstack(embeddings_list)
+        node_mask = np.vstack(mask_list)
         node_embedding = torch.tensor(node_embedding, dtype=torch.float)  # [num_nodes, embedding_dim]
+        node_mask = torch.tensor(node_mask, dtype=torch.bool)
 
         # edge info
         edge_index = []
@@ -79,7 +116,8 @@ def embed_graph_single_process(graph_dir, graph_filename, save_dir, tokenizer, m
             x=node_embedding,           # code embeddings
             edge_index=edge_index,      # edge index
             node_type=node_type,        # node type
-            edge_type=edge_type         # edge type
+            edge_type=edge_type,         # edge type
+            attention_mask=node_mask
         )
 
         # save as .pt file
