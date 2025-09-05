@@ -215,6 +215,7 @@ class GCNReasonerTrainer:
         # Create custom dataset for lazy loading
         dataset = GraphDataset(
             queries=self.data_list['x'],
+            queries_mask=self.data_list['x_mask'],
             categories=self.data_list['y'],
             pt_paths=self.data_list['image'],
             graph_embedding=self.graph_embedding
@@ -317,6 +318,7 @@ class GCNReasonerTrainer:
         # Create custom dataset for lazy loading
         dataset = GraphDataset(
             queries=test_data_list['x'],
+            queries_mask=test_data_list['x_mask'],
             categories=test_data_list['y'],
             pt_paths=test_data_list['image'],
             graph_embedding=self.graph_embedding

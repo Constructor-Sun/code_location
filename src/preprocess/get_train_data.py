@@ -14,10 +14,11 @@ from transformers import AutoTokenizer, AutoModel
 # save as Parquet
 def save_to_parquet(data, filename):
     # ensure that the lengths are the same
-    assert len(data['x']) == len(data['y']) == len(data['image'])
+    assert len(data['x']) == len(data['x_mask']) == len(data['y']) == len(data['image'])
     # use DataFrame
     df = pd.DataFrame({
         'x': [x.tolist() if hasattr(x, 'tolist') else x for x in data['x']],
+        'x_mask': [x.tolist() if hasattr(x, 'tolist') else x for x in data['x_mask']],
         'y': [json.dumps(y) for y in data['y']],
         'image': data['image']
     })
@@ -25,27 +26,46 @@ def save_to_parquet(data, filename):
     df.to_parquet(filename, engine='pyarrow', index=False, compression='snappy')
     print(f"parquet saving at {filename}")
 
-# def embed_question_batch(tokenizer, model, question):
-#     inputs = tokenizer(question, return_tensors="pt", truncation=True, max_length=4096, padding="longest")
+# def embed_question_batch(tokenizer, model, question, max_length = 2048):
+#     inputs = tokenizer(question, return_tensors="pt", truncation=True, max_length=max_length, padding="longest")
 #     inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    
 #     with torch.no_grad():
-#         embeddings = model(**inputs).last_hidden_state.mean(dim=1)  # [batch_size, embedding_dim]
+#         outputs = model(**inputs)
+#         attention_mask = inputs['attention_mask'].unsqueeze(-1)  # [batch_size, max_length, 1]
+#         masked_embeddings = outputs.last_hidden_state * attention_mask
+#         embeddings = masked_embeddings.sum(dim=1)  # [batch_size, embedding_dim]
+#         seq_lengths = attention_mask.sum(dim=1)  # [batch_size, 1]
+#         seq_lengths = torch.clamp(seq_lengths, min=1)
+#         embeddings = embeddings / seq_lengths
+    
 #     return embeddings.cpu().numpy()
 
-def embed_question_batch(tokenizer, model, question, max_length = 2048):
-    inputs = tokenizer(question, return_tensors="pt", truncation=True, max_length=max_length, padding="longest")
+# def embed_questions_wrapper(args):
+#     model_path, questions_chunk, device_id, batch_size = args
+#     # analyze args from pool map
+#     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+#     model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+#     device = torch.device(f"cuda:{device_id}")
+#     model = model.to(device)
+    
+#     # compute batch embeddings
+#     batch_embeddings_list = []
+#     with torch.no_grad():
+#         for i in range(0, len(questions_chunk), batch_size):
+#             batch_questions = questions_chunk[i:i + batch_size]
+#             batch_embeddings = embed_question_batch(tokenizer, model, batch_questions)
+#             batch_embeddings_list.append(batch_embeddings)
+#             torch.cuda.empty_cache()
+    
+#     return np.concatenate(batch_embeddings_list, axis=0)
+
+def embed_question_batch(tokenizer, model, texts, max_length=2048):
+    inputs = tokenizer(texts, return_tensors="pt", truncation=True, max_length=max_length, padding="max_length") # padding="longest"
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
-    
     with torch.no_grad():
-        outputs = model(**inputs)
-        attention_mask = inputs['attention_mask'].unsqueeze(-1)  # [batch_size, max_length, 1]
-        masked_embeddings = outputs.last_hidden_state * attention_mask
-        embeddings = masked_embeddings.sum(dim=1)  # [batch_size, embedding_dim]
-        seq_lengths = attention_mask.sum(dim=1)  # [batch_size, 1]
-        seq_lengths = torch.clamp(seq_lengths, min=1)
-        embeddings = embeddings / seq_lengths
-    
-    return embeddings.cpu().numpy()
+        embeddings = model(**inputs).last_hidden_state  # [batch_size, max_length, embedding_dim]
+    return embeddings.cpu().numpy(), inputs['attention_mask'].cpu().numpy()
 
 def embed_questions_wrapper(args):
     model_path, questions_chunk, device_id, batch_size = args
@@ -57,14 +77,19 @@ def embed_questions_wrapper(args):
     
     # compute batch embeddings
     batch_embeddings_list = []
+    batch_mask_list = []
     with torch.no_grad():
         for i in range(0, len(questions_chunk), batch_size):
             batch_questions = questions_chunk[i:i + batch_size]
-            batch_embeddings = embed_question_batch(tokenizer, model, batch_questions)
+            batch_embeddings, batch_mask = embed_question_batch(tokenizer, model, batch_questions)
             batch_embeddings_list.append(batch_embeddings)
+            batch_mask_list.append(batch_mask)
             torch.cuda.empty_cache()
-    
-    return np.concatenate(batch_embeddings_list, axis=0)
+    batch_embeddings = np.concatenate(batch_embeddings_list, axis=0)
+    batch_mask = np.concatenate(batch_mask_list, axis=0)
+    print("batch_embeddings: ", batch_embeddings.shape)
+    print("batch_mask: ", batch_mask.shape)
+    return batch_embeddings, batch_mask
 
 def indices_to_multihot(indices_list: list[list[int]], lengths: list[int]) -> list[list[int]]:
     """
@@ -129,7 +154,8 @@ def main():
             start_time = time.time()
             with Pool(processes=num_processes) as pool:
                 results = pool.map(embed_questions_wrapper, task_args)
-            embed_problems = np.concatenate(results, axis=0)
+            embed_problems = np.concatenate(results[0], axis=0)
+            embed_mask = np.concatenate(results[1], axis=0)
             end_time = time.time()
             execution_time = end_time - start_time
             print(f"All processes completed, using {execution_time:.3f} s")
@@ -137,6 +163,7 @@ def main():
         converted_y = indices_to_multihot(y, image_num)
         data = {
             "x": embed_problems,
+            "x_mask": embed_mask,
             "y": converted_y,
             "image": image_name
         }
