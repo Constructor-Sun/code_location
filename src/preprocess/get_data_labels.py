@@ -201,17 +201,13 @@ def analyze_patch(code_map_path, patch):
         if start_line is None or end_line is None:
             continue
         
-        # 检查是否有删除行在函数范围内
         has_deleted = any(start_line <= line <= end_line for line in mod_info['deleted_lines'])
-        # 检查是否有新增行在函数范围内
         has_added = any(start_line <= line <= end_line for line in mod_info['added_lines'])
         
         if has_deleted:
-            # 有删除行，说明是修改
             modified_functions.add(node_name)
             modified_node_indices.append(idx)
         elif has_added:
-            # 只有新增行，说明是新增
             added_functions.add(node_name)
             added_node_indices.append(idx)
     

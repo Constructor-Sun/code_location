@@ -25,11 +25,26 @@ def save_to_parquet(data, filename):
     df.to_parquet(filename, engine='pyarrow', index=False, compression='snappy')
     print(f"parquet saving at {filename}")
 
-def embed_question_batch(tokenizer, model, question):
-    inputs = tokenizer(question, return_tensors="pt", truncation=True, max_length=4096, padding="longest")
+# def embed_question_batch(tokenizer, model, question):
+#     inputs = tokenizer(question, return_tensors="pt", truncation=True, max_length=4096, padding="longest")
+#     inputs = {k: v.to(model.device) for k, v in inputs.items()}
+#     with torch.no_grad():
+#         embeddings = model(**inputs).last_hidden_state.mean(dim=1)  # [batch_size, embedding_dim]
+#     return embeddings.cpu().numpy()
+
+def embed_question_batch(tokenizer, model, question, max_length = 2048):
+    inputs = tokenizer(question, return_tensors="pt", truncation=True, max_length=max_length, padding="longest")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    
     with torch.no_grad():
-        embeddings = model(**inputs).last_hidden_state.mean(dim=1)  # [batch_size, embedding_dim]
+        outputs = model(**inputs)
+        attention_mask = inputs['attention_mask'].unsqueeze(-1)  # [batch_size, max_length, 1]
+        masked_embeddings = outputs.last_hidden_state * attention_mask
+        embeddings = masked_embeddings.sum(dim=1)  # [batch_size, embedding_dim]
+        seq_lengths = attention_mask.sum(dim=1)  # [batch_size, 1]
+        seq_lengths = torch.clamp(seq_lengths, min=1)
+        embeddings = embeddings / seq_lengths
+    
     return embeddings.cpu().numpy()
 
 def embed_questions_wrapper(args):
@@ -51,7 +66,7 @@ def embed_questions_wrapper(args):
     
     return np.concatenate(batch_embeddings_list, axis=0)
 
-def indices_to_class(indices_list: list[list[int]], lengths: list[int]) -> list[list[int]]:
+def indices_to_multihot(indices_list: list[list[int]], lengths: list[int]) -> list[list[int]]:
     """
     convert index into class
     """
@@ -119,7 +134,7 @@ def main():
             execution_time = end_time - start_time
             print(f"All processes completed, using {execution_time:.3f} s")
 
-        converted_y = indices_to_class(y, image_num)
+        converted_y = indices_to_multihot(y, image_num)
         data = {
             "x": embed_problems,
             "y": converted_y,

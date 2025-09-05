@@ -19,6 +19,7 @@ from sklearn.metrics import precision_recall_fscore_support
 #     categories = torch.tensor(categories)
     
 #     return queries, categories, batch_graph
+VERY_SMALL_NUMBER = 1e-10
 
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.8, gamma=2.0, reduction='mean'):
@@ -59,6 +60,7 @@ class GCNReasonerTrainer:
         scheduler_params=None,
         batch_size=16,
         epochs=10,
+        save_path="saved_models",
         log_file=None,
         device="cuda" if torch.cuda.is_available() else "cpu",
         focal_loss_params=None
@@ -84,8 +86,9 @@ class GCNReasonerTrainer:
         self.batch_size = batch_size
         self.epochs = epochs
         self.device = device
-        self.log_file = log_file
         self.num_classes = num_classes
+        self.checkpoint_dir = save_path
+        self.log_file = os.path.join(save_path, log_file)
 
         # Move model to device(s)
         if self.device == "cuda" and torch.cuda.device_count() > 1:
@@ -109,7 +112,7 @@ class GCNReasonerTrainer:
         # Initialize focal loss
         # focal_loss_params = focal_loss_params or {'alpha': 0.25, 'gamma': 2.0}
         # self.criterion = FocalLoss(**focal_loss_params)
-        self.criterion = nn.KLDivLoss(reduction='batchmean')
+        self.criterion = nn.KLDivLoss(reduction='sum')
 
         # Initialize metrics storage
         self.training_metrics = []
@@ -152,6 +155,52 @@ class GCNReasonerTrainer:
             Data: Torch geometric Data object
         """
         return torch.load(pt_path, weights_only=False)
+    
+
+    def kl_loss(self, pred_list, target_list):
+        """
+        Calculate KL divergence loss for a batch of predictions and targets.
+        
+        Args:
+            pred_list (list): List of tensors, each of shape [num_nodes, 2], containing logits.
+            target_list (list): List of tensors, each of shape [num_nodes], containing binary labels (0 or 1).
+            
+        Returns:
+            torch.Tensor: Average KL divergence loss across the batch.
+        """
+        assert len(pred_list) == len(target_list), "pred_list and target_list must have the same length"
+        batch_size = len(pred_list)
+        total_loss = 0.0
+        valid_samples = 0
+        
+        for i in range(batch_size):
+            pred = pred_list[i]  # Shape: [num_nodes, 2]
+            target = target_list[i]  # Shape: [num_nodes]
+            
+            # Convert logits to probabilities via softmax
+            pred_prob = F.softmax(pred, dim=1)  # Shape: [num_nodes, 2]
+            pred_prob = pred_prob.clamp(min=VERY_SMALL_NUMBER)  # Avoid log(0)
+            
+            # Convert target to probability distribution
+            # num_nodes = target.size(0)
+            target_prob = torch.zeros_like(pred)  # Shape: [num_nodes, 2]
+            target_prob[:, 1] = target.float()  # Positive class (1) probability
+            target_prob[:, 0] = 1.0 - target.float()  # Negative class (0) probability
+            
+            # Normalize target to sum to 1 per node (if not already normalized)
+            answer_number = torch.sum(target)
+            if answer_number > 0:  # Only include samples with at least one positive label
+                # Compute KL divergence
+                log_pred_prob = torch.log(pred_prob)
+                loss = self.criterion(log_pred_prob, target_prob)  # Shape: scalar (sum reduction)
+                total_loss += loss
+                valid_samples += 1
+        
+        # Compute average loss
+        if valid_samples == 0:
+            return torch.tensor(0.0, device=pred_list[0].device, requires_grad=True)
+        avg_loss = total_loss / valid_samples
+        return avg_loss
 
     def train(self):
         """
@@ -188,22 +237,27 @@ class GCNReasonerTrainer:
 
                 # Move batch to device
                 # Extract query, category, and graph data
-                category = [data.category for data in batchs]
-                ori_category = torch.cat(category)
-                category = F.one_hot(ori_category, num_classes=self.num_classes).cuda()
-                category = category / category.sum(dim=1, keepdim=True)
+                category = []
+                # ori_category = torch.cat(category)
+                for data in batchs:
+                    label = data.category
+                    category.append(label)
 
                 # Forward pass
-                output = self.model(batchs)
-                output = F.log_softmax(output, dim=-1)
-                loss = self.criterion(output, category)
+                logit = self.model(batchs)
+                output = []
+                begin = 0
+                for label in category:
+                    pred = logit[begin:begin+len(label), :]
+                    begin += len(label)
+                    output.append(pred)
+                loss = self.kl_loss(output, category)
 
                 # Backward pass
                 loss.backward()
                 self.optimizer.step()
 
                 epoch_loss += loss.item()
-
                 current_loss = loss.item()
                 batch_pbar.set_postfix({
                     'loss': f'{current_loss:.4f}',
@@ -211,8 +265,8 @@ class GCNReasonerTrainer:
                 })
 
                 # Collect predictions and labels for precision
-                pred = output.argmax(dim=1).cpu().numpy()
-                labels = ori_category.cpu().numpy()
+                pred = logit.argmax(dim=1).cpu().numpy()
+                labels = torch.cat(category).cpu().numpy()
                 all_preds.extend(pred)
                 all_labels.extend(labels)
 

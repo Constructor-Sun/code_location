@@ -29,7 +29,7 @@ class GraphDataset(Dataset):
         
         # Attach query and category to the Data object
         graph_data.query = torch.tensor(self.queries[idx]).view(1, -1)
-        graph_data.category = torch.tensor(self.categories[idx])# .view(1, -1)
+        graph_data.category = torch.tensor(self.categories[idx]) # .view(1, -1)
 
         # print("graph_data: ", graph_data)
         # print("graph_data.query;", graph_data.query.shape)

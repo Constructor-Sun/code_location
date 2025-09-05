@@ -17,17 +17,30 @@ def get_filenames_in_dir(directory_path):
             filenames.append(filename.rsplit('.', 1)[0])
     return filenames
 
-def embed_text_batch(tokenizer, model, texts, max_length):
+def embed_text_batch(tokenizer, model, texts, max_length=2048):
+    if isinstance(texts, str):
+        texts = [texts]
     inputs = tokenizer(texts, return_tensors="pt", truncation=True, max_length=max_length, padding="longest")
+    print(inputs['input_ids'].shape)
+    if inputs['input_ids'].shape[-1] > max_length:
+        print("some inputs exceed max length")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    
     with torch.no_grad():
-        embeddings = model(**inputs).last_hidden_state  # [batch_size, max_length, embedding_dim]
+        outputs = model(**inputs)
+        attention_mask = inputs['attention_mask'].unsqueeze(-1)  # [batch_size, max_length, 1]
+        masked_embeddings = outputs.last_hidden_state * attention_mask
+        embeddings = masked_embeddings.sum(dim=1)  # [batch_size, embedding_dim]
+        seq_lengths = attention_mask.sum(dim=1)  # [batch_size, 1]
+        seq_lengths = torch.clamp(seq_lengths, min=1)
+        embeddings = embeddings / seq_lengths
+    
     return embeddings.cpu().numpy()
 
-def embed_codes(tokenizer, model, graph, batch_size=16, max_length=1024):
+def embed_codes(tokenizer, model, graph, batch_size=16, max_length=2048):
     node_ids = list(graph.nodes)
     embedding_dim = model.config.hidden_size  # Get embedding dimension from model
-    embeddings = np.empty((len(node_ids), max_length, embedding_dim), dtype=np.float32)
+    embeddings = np.empty((len(node_ids), embedding_dim), dtype=np.float32)
     
     indices_and_lengths = [(i, len(tokenizer.encode(graph.nodes[node].get('code', node), add_special_tokens=False))) 
                            for i, node in enumerate(node_ids)]
@@ -48,18 +61,27 @@ def embed_codes(tokenizer, model, graph, batch_size=16, max_length=1024):
         graph.nodes[node]['embedding'] = embeddings[i]
     return graph
 
-# def embed_text_batch(tokenizer, model, texts, max_length=1024):
+# def embed_text_batch(tokenizer, model, texts, max_length):
 #     inputs = tokenizer(texts, return_tensors="pt", truncation=True, max_length=max_length, padding="longest")
 #     inputs = {k: v.to(model.device) for k, v in inputs.items()}
 #     with torch.no_grad():
 #         embeddings = model(**inputs).last_hidden_state  # [batch_size, max_length, embedding_dim]
-#     return embeddings.cpu().numpy(), inputs['attention_mask'].cpu().astype(np.bool_)
+#     return embeddings.cpu().numpy()
 
-# def embed_codes(tokenizer, model, graph, batch_size=16, max_length=1024):
+# def embed_text_batch(tokenizer, model, texts, max_length=2048):
+#     inputs = tokenizer(texts, return_tensors="pt", truncation=True, max_length=max_length, padding="longest") # padding="longest"
+#     inputs = {k: v.to(model.device) for k, v in inputs.items()}
+#     with torch.no_grad():
+#         embeddings = model(**inputs).last_hidden_state  # [batch_size, max_length, embedding_dim]
+#     return embeddings.cpu().numpy(), inputs['attention_mask'].cpu().numpy().astype(np.bool_)
+
+# def embed_codes(tokenizer, model, graph, batch_size=16, max_length=2048):
 #     node_ids = list(graph.nodes)
 #     embedding_dim = model.config.hidden_size  # Get embedding dimension from model
-#     embeddings = np.empty((len(node_ids), max_length, embedding_dim), dtype=np.float32)
-#     masks = np.empty((len(node_ids), max_length), dtype=np.bool_)
+#     # embeddings = np.empty((len(node_ids), max_length, embedding_dim), dtype=np.float32)
+#     # masks = np.empty((len(node_ids), max_length), dtype=np.bool_)
+#     embeddings_dict = {}
+#     masks_dict = {}
     
 #     indices_and_lengths = [(i, len(tokenizer.encode(graph.nodes[node].get('code', node), add_special_tokens=False))) 
 #                            for i, node in enumerate(node_ids)]
@@ -73,30 +95,43 @@ def embed_codes(tokenizer, model, graph, batch_size=16, max_length=1024):
 #             batch_texts = [graph.nodes[node_ids[idx]].get('code', node_ids[idx]) for idx in batch_indices]
 #             batch_embeddings, batch_masks = embed_text_batch(tokenizer, model, batch_texts, max_length)
 #             for j, idx in enumerate(batch_indices):
-#                 embeddings[idx] = batch_embeddings[j]
-#                 masks[idx] = batch_masks[j]
+#                 # embeddings[idx] = batch_embeddings[j]
+#                 # masks[idx] = batch_masks[j]
+#                 embeddings_dict[node_ids[idx]] = batch_embeddings[j]
+#                 masks_dict[node_ids[idx]] = batch_masks[j]
 #             torch.cuda.empty_cache()  # Clear cache after each batch
     
-#     for i, node in enumerate(node_ids):
-#         graph.nodes[node]['embedding'] = embeddings[i]
-#         graph.nodes[node]['mask'] = masks[i]
+#     # for i, node in enumerate(node_ids):
+#     #     graph.nodes[node]['embedding'] = embeddings[i]
+#     #     graph.nodes[node]['mask'] = masks[i]
+
+#     for node in node_ids:
+#         emb = embeddings_dict[node]
+#         mask = masks_dict[node]
+#         # padding
+#         if emb.shape[0] < max_length:
+#             pad_length = max_length - emb.shape[0]
+#             emb = np.pad(emb, ((0, pad_length), (0, 0)), mode='constant', constant_values=0)
+#             mask = np.pad(mask, (0, pad_length), mode='constant', constant_values=0)
+#         graph.nodes[node]['embedding'] = emb
+#         graph.nodes[node]['mask'] = mask
 #     return graph
 
 def embed_graph_single_process(graph_dir, graph_filename, save_dir, tokenizer, model, batch_size):
     """graph embedding in one process"""
     with open(os.path.join(graph_dir, graph_filename + '.pkl'), 'rb') as f:
         graph = pickle.load(f)
-        graph = embed_codes(tokenizer, model, graph, batch_size)
+        graph = embed_codes(tokenizer, model, graph, batch_size, max_length=2048)
 
         # node info
         node_ids = list(graph.nodes)
         node_type = [NODE_TYPE_MAPPING.get(graph.nodes[n]['type'], -1) for n in node_ids] # [num_nodes]
         embeddings_list = [graph.nodes[n]['embedding'] for n in node_ids]
-        mask_list = [graph.nodes[n]['mask'] for n in node_ids]
+        # mask_list = [graph.nodes[n]['mask'] for n in node_ids]
         node_embedding = np.vstack(embeddings_list)
-        node_mask = np.vstack(mask_list)
+        # node_mask = np.vstack(mask_list)
         node_embedding = torch.tensor(node_embedding, dtype=torch.float)  # [num_nodes, embedding_dim]
-        node_mask = torch.tensor(node_mask, dtype=torch.bool)
+        # node_mask = torch.tensor(node_mask, dtype=torch.bool)
 
         # edge info
         edge_index = []
@@ -116,8 +151,8 @@ def embed_graph_single_process(graph_dir, graph_filename, save_dir, tokenizer, m
             x=node_embedding,           # code embeddings
             edge_index=edge_index,      # edge index
             node_type=node_type,        # node type
-            edge_type=edge_type,         # edge type
-            attention_mask=node_mask
+            edge_type=edge_type        # edge type
+            # attention_mask=node_mask    # attention mask
         )
 
         # save as .pt file
@@ -145,7 +180,9 @@ def main():
     mp.set_start_method('spawn', force=True)
     dataset_name = args.dataset.split('/')[-1]
     args.graph_dir = f'{args.index_dir}/{dataset_name}/{args.graph_name}/'
-    args.index_dir = f'{args.index_dir}/{dataset_name}/graph_embedding/'
+    args.index_dir = f'{args.index_dir}/{dataset_name}/graph_embedding_pool/'
+    print("graph_dir: ", args.graph_dir)
+    print("index_dir: ", args.index_dir)
     os.makedirs(args.index_dir, exist_ok=True)
 
     graph_files = get_filenames_in_dir(args.graph_dir)

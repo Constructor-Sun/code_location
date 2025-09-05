@@ -11,7 +11,7 @@ class GCNReaonser(nn.Module):
     def __init__(self, in_channels, hidden_channels, num_classes, training=True, dropout=0.2):
         super(GCNReaonser, self).__init__()
         self.dropout = dropout
-        self.training = True
+        self.training = training
         
         # GCN conv
         self.convs = nn.ModuleList([
@@ -23,24 +23,14 @@ class GCNReaonser(nn.Module):
         
         # MLP
         self.classifier = nn.Linear(hidden_channels, num_classes)
+
+    def 
         
     def forward(self, batchs):
-        # print("torch.unique(batch): ", torch.unique(batch))
-        # if batch is not None:
-        #     # 将query扩展到每个节点
-        #     query_expanded = query[batch]  # [num_nodes, 1024]
-        #     print("query_expanded: ", query_expanded.shape)
-        #     exit()
-        #     x = query_expanded * x
-        # else:
-        #     x = query * x
         x = batchs.x
         query = batchs.query
         query = query[batchs.batch]
         edge_index = batchs.edge_index
-        # print("x.shape: ", x.shape)
-        # print("query: ", query.shape)
-        # print("edge_index: ", edge_index.shape)
 
         x = query * x
         residuals = [x]  # residual
