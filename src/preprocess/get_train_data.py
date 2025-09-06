@@ -60,7 +60,7 @@ def save_to_parquet(data, filename):
     
 #     return np.concatenate(batch_embeddings_list, axis=0)
 
-def embed_question_batch(tokenizer, model, texts, max_length=2048):
+def embed_question_batch(tokenizer, model, texts, max_length=1536):
     inputs = tokenizer(texts, return_tensors="pt", truncation=True, max_length=max_length, padding="max_length") # padding="longest"
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     with torch.no_grad():
@@ -82,14 +82,16 @@ def embed_questions_wrapper(args):
         for i in range(0, len(questions_chunk), batch_size):
             batch_questions = questions_chunk[i:i + batch_size]
             batch_embeddings, batch_mask = embed_question_batch(tokenizer, model, batch_questions)
+            # for j in range(len(batch_embeddings)):
+            #     batch_embeddings_list.append(batch_embeddings[j].tolist())
+            #     batch_mask_list.append(batch_mask[j].tolist())
             batch_embeddings_list.append(batch_embeddings)
             batch_mask_list.append(batch_mask)
             torch.cuda.empty_cache()
     batch_embeddings = np.concatenate(batch_embeddings_list, axis=0)
     batch_mask = np.concatenate(batch_mask_list, axis=0)
-    print("batch_embeddings: ", batch_embeddings.shape)
-    print("batch_mask: ", batch_mask.shape)
     return batch_embeddings, batch_mask
+    # return batch_embeddings_list, batch_mask_list
 
 def indices_to_multihot(indices_list: list[list[int]], lengths: list[int]) -> list[list[int]]:
     """
@@ -154,11 +156,21 @@ def main():
             start_time = time.time()
             with Pool(processes=num_processes) as pool:
                 results = pool.map(embed_questions_wrapper, task_args)
-            embed_problems = np.concatenate(results[0], axis=0)
-            embed_mask = np.concatenate(results[1], axis=0)
             end_time = time.time()
             execution_time = end_time - start_time
-            print(f"All processes completed, using {execution_time:.3f} s")
+            print(f"GPU processes completed, using {execution_time:.3f} s")
+            # embed_problems = []
+            # embed_mask = []
+            # for result in results:
+            #     embed_problems.extend(result[0])
+            #     embed_mask.extend(result[1])
+            embed_problems = [result[0] for result in results]
+            embed_mask = [result[1] for result in results]
+            embed_problems = np.concatenate(embed_problems, axis=0)
+            embed_mask = np.concatenate(embed_mask, axis=0)
+            end_time = time.time()
+            execution_time = end_time - start_time
+            print(f"All processes completed, using {execution_time:.3f} s totally")
 
         converted_y = indices_to_multihot(y, image_num)
         data = {
