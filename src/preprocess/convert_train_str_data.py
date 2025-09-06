@@ -7,8 +7,8 @@ from datasets import load_dataset, Features, Array2D, Sequence, Value
 # convert Parquet to Dataset
 def load_from_parquet(filename):
     def process_example(example):
-        example['x'] = torch.tensor(example['x'], dtype=torch.float32)  # list -> tensor float32
-        example['x_mask'] = torch.tensor(example['x_mask'], dtype=torch.int32)
+        example['x'] = example['x']
+        # example['x_mask'] = torch.tensor(example['x_mask'], dtype=torch.int32)
         example['y'] = torch.tensor(json.loads(example['y']), dtype=torch.int32)  # JSON -> tensor int32
         return example
     

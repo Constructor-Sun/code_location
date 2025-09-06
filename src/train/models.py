@@ -9,7 +9,7 @@ class GCNReaonser(nn.Module):
     """
     GCN layer with residual network and classifier
     """
-    def __init__(self, in_channels, hidden_channels, num_classes, 
+    def __init__(self, num_classes, 
                  training=True, 
                  dropout=0.2, 
                  top_k=5, 
@@ -26,35 +26,35 @@ class GCNReaonser(nn.Module):
         self.embed_dim = embed_dim
         self.num_layers = num_layers
 
-        self.init_layers(in_channels, hidden_channels, num_classes)
+        self.init_layers()
 
-    def init_layers(self, in_channels, hidden_channels, num_classes):
+    def init_layers(self):
         # GCN conv
-        self.convs = nn.ModuleList([
-            GCNConv(in_channels, hidden_channels),
-            GCNConv(hidden_channels, hidden_channels),
-            GCNConv(hidden_channels, hidden_channels),
-            GCNConv(hidden_channels, hidden_channels)
-        ])
-        self.classifier = nn.Linear(hidden_channels, num_classes)
+        # self.convs = nn.ModuleList([
+        #     GCNConv(in_channels, hidden_channels),
+        #     GCNConv(hidden_channels, hidden_channels),
+        #     GCNConv(hidden_channels, hidden_channels),
+        #     GCNConv(hidden_channels, hidden_channels)
+        # ])
+        # self.classifier = nn.Linear(hidden_channels, num_classes)
 
         for k in range(self.instruction_num):
             setattr(self, f'W_v_{k}', nn.Linear(4 * self.embed_dim, self.embed_dim, bias=False))
+            setattr(self, f'gate_{k}', nn.Linear(4 * self.embed_dim, self. embed_dim, bias=False))
         self.W_u = nn.Linear(self.embed_dim, 1, bias=False)
-        self.gru = nn.GRUCell(input_size=self.embed_dim, hidden_size=self.embed_dim)
         self.W_q = nn.Linear(4 * self.embed_dim, self.embed_dim, bias=False)
 
         
         for l in range(self.num_layers):
-            setattr(self, f'W_x_{l}', nn.Linear(self.emb_dim, self.emb_dim, bias=False))
-            setattr(self, f'W_h_{l}', nn.Linear((self.instruction_num + 1) * self.emb_dim, self.emb_dim, bias=False))
+            setattr(self, f'W_x_{l}', nn.Linear(self.embed_dim, self.embed_dim, bias=False))
+            setattr(self, f'W_h_{l}', nn.Linear((self.instruction_num + 1) * self.embed_dim, self.embed_dim, bias=False))
         
-        self.w = nn.Parameter(torch.randn(self.emb_dim))
+        self.w = nn.Parameter(torch.randn(self.embed_dim))
 
     def init_nodes(self, x, query_pool, batch, top_k=5):
         """
-        batchs x: node embeddings [batch_nodes_num, emb_dim]
-        batchs query_pool: query [batch_query_num, emb_dim]
+        batchs x: node embeddings [batch_nodes_num, embed_dim]
+        batchs query_pool: query [batch_query_num, embed_dim]
         batchs batch: node embedding index in current batch [batch_nodes_num]
         top_k: select top_k nodes as initial nodes
         """
@@ -62,7 +62,7 @@ class GCNReaonser(nn.Module):
         num_nodes = x.shape[0]
         
         # expand query to each graph, then compute cosine similarity
-        query_expanded = query_pool[batch]  # [batch_nodes_num, emb_dim]
+        query_expanded = query_pool[batch]  # [batch_nodes_num, embed_dim]
         similarities = F.cosine_similarity(x, query_expanded, dim=1)  # [batch_nodes_num]
 
         # mask
@@ -93,7 +93,7 @@ class GCNReaonser(nn.Module):
         valid_token_count = torch.clamp(valid_token_count, min=1.0)
         
         # pooling at dim 1
-        sum_query = masked_query.sum(dim=1)  # 形状 [batch_query_num, emb_dim]
+        sum_query = masked_query.sum(dim=1)  # 形状 [batch_query_num, embed_dim]
         mean_query = sum_query / valid_token_count
         return mean_query
     
@@ -166,43 +166,45 @@ class GCNReaonser(nn.Module):
         seed_embeddings = node_embeddings[seed_indices]
         
         # Compute h_e by summing seed entity representations
-        h_e = seed_embeddings.sum(dim=0)  # [emb_dim]
-        h_e_expanded = h_e.unsqueeze(0).unsqueeze(0)  # [1, 1, emb_dim]
+        # TODO: h_e cannot be summed directly. One graph has one h_e
+        h_e = seed_embeddings.sum(dim=0)  # [embed_dim]
+        h_e_expanded = h_e.unsqueeze(0).unsqueeze(0)  # [1, 1, embed_dim]
         
         # Process each instruction
         updated_instructions = []
         for k in range(instructions.size(1)):
-            i_k = instructions[:, k, :]  # [batch_query_num, emb_dim]
-            
-            # Compute gate vector using GRU
-            # Note: This assumes a GRU layer is defined elsewhere in the class
-            _, g_k = self.gru(i_k.unsqueeze(0))  # g_k shape: [1, batch_query_num, emb_dim]
-            g_k = g_k.squeeze(0)  # [batch_query_num, emb_dim]
-            
+            i_k = instructions[:, k, :]  # [batch_query_num, embed_dim]
             # Prepare the concatenated features
             concat_features = torch.cat([
                 i_k,
                 h_e_expanded.expand_as(i_k),
                 i_k - h_e_expanded.expand_as(i_k),
                 i_k * h_e_expanded.expand_as(i_k)
-            ], dim=-1)  # [batch_query_num, 4 * emb_dim]
+            ], dim=-1)  # [batch_query_num, 4 * embed_dim]
             
             # Apply linear transformation
-            transformed = self.W_q(concat_features)  # [batch_query_num, emb_dim]
+            transformed = self.W_q(concat_features)  # [batch_query_num, embed_dim]
             
+            # Compute gate vector using GRU
+            # Note: This assumes a GRU layer is defined elsewhere in the class
+            gate_k = getattr(self, f'gate_{k}')
+            g_k = torch.sigmoid(gate_k(concat_features))  # g_k shape: [1, batch_query_num, embed_dim]
+            # g_k = g_k.squeeze(0)  # [batch_query_num, embed_dim]
+            
+
             # Apply gating mechanism
             updated_i_k = (1 - g_k) * i_k + g_k * transformed
             updated_instructions.append(updated_i_k)
         
         # Stack updated instructions
-        updated_instructions = torch.stack(updated_instructions, dim=1)  # [batch_query_num, instruction_num, emb_dim]
+        updated_instructions = torch.stack(updated_instructions, dim=1)  # [batch_query_num, instruction_num, embed_dim]
         return updated_instructions
         
     def update_nodes(self, h_l, p_l, instructions, edge_index, batch_idx, layer_idx):
         """
-        h_l: [batch_nodes_num, emb_dim]
+        h_l: [batch_nodes_num, embed_dim]
         p_l: [batch_nodes_num]
-        instructions: [batch_query_num, instruction_num, emb_dim]
+        instructions: [batch_query_num, instruction_num, embed_dim]
         edge_index: [2, E]
         batch_idx: [batch_nodes_num]
         """
@@ -211,38 +213,38 @@ class GCNReaonser(nn.Module):
 
         src_nodes, dst_nodes = edge_index
         
-        # [E, instruction_num, emb_dim]
+        # [E, instruction_num, embed_dim]
         expanded_instructions = instructions[batch_idx[src_nodes]]
-        # E, emb_dim]
+        # E, embed_dim]
         neighbor_h = W_x(h_l[src_nodes])
-        # (I^(k) ⊙ W_X h_v') [E, instruction_num, emb_dim]
+        # (I^(k) ⊙ W_X h_v') [E, instruction_num, embed_dim]
         messages = expanded_instructions * neighbor_h.unsqueeze(1)
-        c_vk = F.relu(messages)  # [E, instruction_num, emb_dim]
+        c_vk = F.relu(messages)  # [E, instruction_num, embed_dim]
         
         # [E, 1, 1]
         p_weights = p_l[src_nodes].view(-1, 1, 1)
-        # [E, instruction_num, emb_dim]
+        # [E, instruction_num, embed_dim]
         weighted_messages = p_weights * c_vk
         
-        # [batch_nodes_num, instruction_num, emb_dim]
+        # [batch_nodes_num, instruction_num, embed_dim]
         aggregated = scatter(weighted_messages, dst_nodes, dim=0, 
                             dim_size=h_l.size(0), reduce='sum')
         
-        # [batch_nodes_num, instruction_num * emb_dim]
+        # [batch_nodes_num, instruction_num * embed_dim]
         h_ins = aggregated.view(h_l.size(0), -1)  # [N, Q*D]
         combined = torch.cat([h_l, h_ins], dim=1)
         h_new = F.relu(W_h(combined))  # [N, D]
         
         # score for nodes
-        scores = torch.matmul(h_new, self.u)
+        scores = torch.matmul(h_new, self.w)
         p_new = F.softmax(scores, dim=0)
         
         return h_new, p_new
         
     def forward(self, batchs):
         """
-        batchs x: node embeddings [batch_nodes_num, emb_dim]
-        batchs query: query [batch_query_num, seq_len, emb_dim]
+        batchs x: node embeddings [batch_nodes_num, embed_dim]
+        batchs query: query [batch_query_num, seq_len, embed_dim]
         batchs query_mask: query [batch_query_num, seq_len, 1]
         batchs batch: node embedding index in current batch [batch_nodes_num]
         batchs edge_index: edge connections [batch_edge_num, 2]
@@ -257,23 +259,21 @@ class GCNReaonser(nn.Module):
         query_pool = self.get_pool_query(query, query_mask)
 
         p_0 = self.init_nodes(x, query_pool, batch_idx, self.top_k)
-        instructions = self.init_instructions() # [batch_query_num, instruction_num, embed_dim]
+        instructions = self.init_instructions(query, query_mask, query_pool) # [batch_query_num, instruction_num, embed_dim]
         h_in = x
 
-        for t in range(self.num_iter):
+        for _ in range(self.num_iter):
             p_l = p_0.clone()  # 每个 stage 都从种子实体开始推理
             h_current = h_in
             for l in range(self.num_layers):
-            # instructions = self.update_instructions(p_0, node_embeddings, instructions)
                 h_next, p_next = self.update_nodes(h_current, p_l, instructions, edge_index, batch_idx, l)
                 h_current = h_next
                 p_l = p_next
             h_out = h_current
             p_out = p_l
-            instructions = self.update_instructions(instructions, h_out, p_0)
+            instructions = self.update_instructions(p_0, h_out, instructions)
             h_in = h_out
         
-        exit()
         return p_out
 
         # x = query * x

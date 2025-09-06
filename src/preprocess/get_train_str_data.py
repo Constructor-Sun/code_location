@@ -14,11 +14,11 @@ from transformers import AutoTokenizer, AutoModel
 # save as Parquet
 def save_to_parquet(data, filename):
     # ensure that the lengths are the same
-    assert len(data['x']) == len(data['x_mask']) == len(data['y']) == len(data['image'])
+    assert len(data['x']) == len(data['y']) == len(data['image'])
     # use DataFrame
     df = pd.DataFrame({
-        'x': [x.tolist() if hasattr(x, 'tolist') else x for x in data['x']],
-        'x_mask': [x.tolist() if hasattr(x, 'tolist') else x for x in data['x_mask']],
+        # 'x': [x.tolist() if hasattr(x, 'tolist') else x for x in data['x']],
+        'x': data['x'],
         'y': [json.dumps(y) for y in data['y']],
         'image': data['image']
     })
@@ -60,7 +60,7 @@ def save_to_parquet(data, filename):
     
 #     return np.concatenate(batch_embeddings_list, axis=0)
 
-def embed_question_batch(tokenizer, model, texts, max_length=1536):
+def embed_question_batch(tokenizer, model, texts, max_length=1024):
     inputs = tokenizer(texts, return_tensors="pt", truncation=True, max_length=max_length, padding="max_length") # padding="longest"
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
     with torch.no_grad():
@@ -125,57 +125,51 @@ def main():
         problems, y = json_data["problem_statement"], json_data["edit_functions_ord"]
         image_name, image_num = json_data["image_name"], json_data["image_node_num"]
 
-        if not torch.cuda.is_available():
-            print("No GPU available, using CPU")
-            device = torch.device("cpu")
-            tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
-            model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True)
-            model = model.to(device)
-            model.eval()
-            for problem in problems:
-                embed_problems = embed_question_batch(tokenizer, model, problem)
-        else:
-            num_gpus = torch.cuda.device_count()
-            num_processes = num_gpus
+        # if not torch.cuda.is_available():
+        #     print("No GPU available, using CPU")
+        #     device = torch.device("cpu")
+        #     tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
+        #     model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True)
+        #     model = model.to(device)
+        #     model.eval()
+        #     for problem in problems:
+        #         embed_problems = embed_question_batch(tokenizer, model, problem)
+        # else:
+        #     num_gpus = torch.cuda.device_count()
+        #     num_processes = num_gpus
 
-            print(f"Using {num_processes} GPUs out of {num_gpus} available")
-            print(f"Processing {len(problems)} graph files")
+        #     print(f"Using {num_processes} GPUs out of {num_gpus} available")
+        #     print(f"Processing {len(problems)} graph files")
 
-            chunk_size = len(problems) // num_processes
-            question_chunks = []
-            for i in range(num_processes):
-                start = i * chunk_size
-                end = start + chunk_size if i < num_processes - 1 else len(problems)
-                question_chunks.append(problems[start:end])
+        #     chunk_size = len(problems) // num_processes
+        #     question_chunks = []
+        #     for i in range(num_processes):
+        #         start = i * chunk_size
+        #         end = start + chunk_size if i < num_processes - 1 else len(problems)
+        #         question_chunks.append(problems[start:end])
 
-            task_args = [
-                (args.model_path, question_chunks[i], i, args.batch_size)
-                for i in range(len(question_chunks))
-            ]
+        #     task_args = [
+        #         (args.model_path, question_chunks[i], i, args.batch_size)
+        #         for i in range(len(question_chunks))
+        #     ]
 
-            start_time = time.time()
-            with Pool(processes=num_processes) as pool:
-                results = pool.map(embed_questions_wrapper, task_args)
-            end_time = time.time()
-            execution_time = end_time - start_time
-            print(f"GPU processes completed, using {execution_time:.3f} s")
-            # embed_problems = []
-            # embed_mask = []
-            # for result in results:
-            #     embed_problems.extend(result[0])
-            #     embed_mask.extend(result[1])
-            embed_problems = [result[0] for result in results]
-            embed_mask = [result[1] for result in results]
-            embed_problems = np.concatenate(embed_problems, axis=0)
-            embed_mask = np.concatenate(embed_mask, axis=0)
-            end_time = time.time()
-            execution_time = end_time - start_time
-            print(f"All processes completed, using {execution_time:.3f} s totally")
+        #     start_time = time.time()
+        #     with Pool(processes=num_processes) as pool:
+        #         results = pool.map(embed_questions_wrapper, task_args)
+        #     end_time = time.time()
+        #     execution_time = end_time - start_time
+        #     print(f"GPU processes completed, using {execution_time:.3f} s")
+        #     embed_problems = [result[0] for result in results]
+        #     embed_mask = [result[1] for result in results]
+        #     embed_problems = np.concatenate(embed_problems, axis=0)
+        #     embed_mask = np.concatenate(embed_mask, axis=0)
+        #     end_time = time.time()
+        #     execution_time = end_time - start_time
+        #     print(f"All processes completed, using {execution_time:.3f} s totally")
 
         converted_y = indices_to_multihot(y, image_num)
         data = {
-            "x": embed_problems,
-            "x_mask": embed_mask,
+            "x": problems,
             "y": converted_y,
             "image": image_name
         }

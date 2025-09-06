@@ -9,6 +9,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="train_index/SWE-smith/question_and_labels/train_dataset")
     parser.add_argument("--graph_embedding", type=str, default="train_index/SWE-smith/graph_embedding_pool")
+    parser.add_argument("--embedding_model", type=str, default="Qwen/Qwen3-Embedding-0.6B")
     parser.add_argument("--save_path", type=str, default="saved_models")
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--optimizer", type=str, default="AdamW")
@@ -19,11 +20,8 @@ def main():
     args = parser.parse_args()
 
     dataset = load_from_disk(args.dataset)
-    in_channels = len(dataset[0]['x'])
     
     model = GCNReaonser(
-        in_channels = in_channels,
-        hidden_channels = in_channels,
         num_classes=2
     )
 
@@ -31,6 +29,7 @@ def main():
         model = model,
         data_list = dataset,
         graph_embedding = args.graph_embedding,
+        embedding_model = args.embedding_model,
         save_path = args.save_path,
         log_file = "log_metrics.json",
         lr = args.lr,

@@ -12,10 +12,10 @@ class GraphDataset(Dataset):
         pt_paths: List of paths to .pt files (relative to graph_embedding_dir)
         graph_embedding_dir: Directory containing .pt files
     """
-    def __init__(self, queries, queries_mask, categories, pt_paths, graph_embedding):
+    def __init__(self, queries, categories, pt_paths, graph_embedding):
         super(GraphDataset, self).__init__()
         self.queries = queries
-        self.queries_mask = queries_mask
+        # self.queries_mask = queries_mask
         self.categories = categories
         self.pt_paths = pt_paths
         self.graph_embedding_dir = graph_embedding
@@ -29,8 +29,9 @@ class GraphDataset(Dataset):
         graph_data = torch.load(pt_path, weights_only=False)
         
         # Attach query and category to the Data object
-        graph_data.query = torch.tensor(self.queries[idx])
-        graph_data.query_mask = torch.tensor(self.queries_mask[idx]).view(1, -1)
+        graph_data.query = self.queries[idx]
+        # print("graph_data.query: ", len(graph_data.query))
+        # graph_data.query_mask = torch.tensor(self.queries_mask[idx]).view(1, -1)
         graph_data.category = torch.tensor(self.categories[idx]) # .view(1, -1)
 
         # print("graph_data: ", graph_data)

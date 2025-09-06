@@ -7,6 +7,7 @@ from tqdm import tqdm
 from torch_geometric.nn import DataParallel # , DistributedDataParallel
 from torch_geometric.loader import DataListLoader
 from dataset import GraphDataset
+from transformers import AutoTokenizer, AutoModel
 from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
 import torch.nn.functional as F
 from sklearn.metrics import precision_recall_fscore_support
@@ -53,6 +54,8 @@ class GCNReasonerTrainer:
         model,
         data_list,
         graph_embedding,
+        embedding_model="Qwen/Qwen3-Embedding-0.6B",
+        embed_max_length=2048,
         num_classes=2,
         optimizer_name="Adam",
         lr=0.001,
@@ -83,6 +86,8 @@ class GCNReasonerTrainer:
         self.model = model
         self.data_list = data_list
         self.graph_embedding = graph_embedding
+        self.embedding_model = embedding_model
+        self.embed_max_length = embed_max_length
         self.batch_size = batch_size
         self.epochs = epochs
         self.device = device
@@ -95,6 +100,10 @@ class GCNReasonerTrainer:
             print(f"Using {torch.cuda.device_count()} GPUs")
             self.model = DataParallel(self.model)
         self.model = self.model.to(device)
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.embedding_model, trust_remote_code=True)
+        self.embed_model = AutoModel.from_pretrained(self.embedding_model, trust_remote_code=True)
+        self.embed_model = self.embed_model.to(device)
 
         # Initialize optimizer
         optimizer_class = getattr(optim, optimizer_name, optim.Adam)
@@ -210,12 +219,13 @@ class GCNReasonerTrainer:
             List of average epoch losses
         """
         self.model.train()
+        self.embed_model.eval()
         losses = []
 
         # Create custom dataset for lazy loading
         dataset = GraphDataset(
             queries=self.data_list['x'],
-            queries_mask=self.data_list['x_mask'],
+            # queries_mask=self.data_list['x_mask'],
             categories=self.data_list['y'],
             pt_paths=self.data_list['image'],
             graph_embedding=self.graph_embedding
@@ -239,11 +249,23 @@ class GCNReasonerTrainer:
                 # Move batch to device
                 # Extract query, category, and graph data
                 category = []
+                query = []
                 # ori_category = torch.cat(category)
                 for data in batchs:
-                    label = data.category
-                    category.append(label)
+                    query.append(data.query)
+                    category.append(data.category)
 
+                # get issue(query) embeddings
+                inputs = self.tokenizer(query, return_tensors="pt", truncation=True, 
+                       max_length=self.embed_max_length, padding="longest")
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                with torch.no_grad():
+                    query_embeddings = self.embed_model(**inputs).last_hidden_state
+                
+                for i, data in enumerate(batchs):
+                    data.query = query_embeddings[i].unsqueeze(0)
+                    data.query_mask = inputs["attention_mask"][i].view(1, -1, 1)
+                
                 # Forward pass
                 logit = self.model(batchs)
                 output = []
@@ -318,7 +340,6 @@ class GCNReasonerTrainer:
         # Create custom dataset for lazy loading
         dataset = GraphDataset(
             queries=test_data_list['x'],
-            queries_mask=test_data_list['x_mask'],
             categories=test_data_list['y'],
             pt_paths=test_data_list['image'],
             graph_embedding=self.graph_embedding
