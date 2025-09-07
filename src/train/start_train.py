@@ -1,6 +1,7 @@
 import os
 import argparse
 import torch
+import pickle
 from datasets import load_from_disk
 from models import GCNReaonser
 from trainers import GCNReasonerTrainer
@@ -38,7 +39,16 @@ def main():
         epochs = args.epochs
     )
 
+    # try:
+        # torch.cuda.memory._record_memory_history(
+        #     max_entries=100000
+        # )
     trainer.train()
+    # except RuntimeError as e:
+    #     if "out of memory" in str(e).lower():
+    #         print("OOM occurred! Saving memory snapshot...")
+    #         torch.cuda.memory._dump_snapshot(f"memory_snapshot.pickle")
+    #     raise e
 
 if __name__ == "__main__":
     main()

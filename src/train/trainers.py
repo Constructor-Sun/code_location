@@ -1,16 +1,23 @@
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import json
 import torch
+# torch.cuda.memory._record_memory_history(True, trace_alloc_max_entries=100000, trace_alloc_record_context=True)
 import torch.nn as nn
 import torch.optim as optim
+import gc
+import numpy as np
 from tqdm import tqdm
 from torch_geometric.nn import DataParallel # , DistributedDataParallel
 from torch_geometric.loader import DataListLoader
+from torch_geometric.loader import NeighborSampler
+from torch_geometric.utils import subgraph
 from dataset import GraphDataset
 from transformers import AutoTokenizer, AutoModel
 from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
 import torch.nn.functional as F
 from sklearn.metrics import precision_recall_fscore_support
+from collections import deque
 
 # def graph_collate_fn(batch):
 #     queries, categories, graph_data_list = zip(*batch)
@@ -68,6 +75,7 @@ class GCNReasonerTrainer:
         device="cuda" if torch.cuda.is_available() else "cpu",
         threshold=0.5, 
         max_nodes=10,
+        top_k=5,
         focal_loss_params=None
     ):
         """
@@ -97,7 +105,10 @@ class GCNReasonerTrainer:
         self.checkpoint_dir = save_path
         self.log_file = os.path.join(save_path, log_file)
         self.threshold = threshold
+        self.top_k = top_k
         self.max_nodes = max_nodes
+        self.num_neighbors = [30, 30, 30]
+        self.subgraph_limit = 5 * np.prod(self.num_neighbors)
 
         # Move model to device(s)
         if self.device == "cuda" and torch.cuda.device_count() > 1:
@@ -222,20 +233,133 @@ class GCNReasonerTrainer:
 
         for i in range(batch_size):
             pred = pred_list[i]
-            target = target_list[i]
-            target = target / target.sum()
+            target = torch.clamp(target_list[i], min=0.0)
             target_sum = target.sum()
-            if target_sum > 0:
-                pred_log = torch.log(pred)
+            if target_sum > 1e-8:
+                target = target / target.sum()
+                pred_log = torch.log(torch.clamp(pred, min=1e-8))
                 loss = self.criterion(pred_log, target)  # Shape: scalar (sum reduction)
-                total_loss += loss
-                valid_samples += 1
+
+                if not torch.isnan(loss) and not torch.isinf(loss):
+                    total_loss += loss
+                    valid_samples += 1
         
         if valid_samples == 0:
             return torch.tensor(0.0, device=pred_list[0].device, requires_grad=True) 
         
         avg_loss = total_loss / valid_samples
         return avg_loss
+    
+    def get_pool_query(self, query, query_mask):
+        masked_query = query * query_mask
+    
+        valid_token_count = query_mask.sum(dim=1)  # [batch_query_num, 1]
+        valid_token_count = torch.clamp(valid_token_count, min=1.0)
+        
+        # pooling at dim 1
+        sum_query = masked_query.sum(dim=1)  # [batch_query_num, embed_dim]
+        mean_query = sum_query / valid_token_count
+        return mean_query
+    
+    def init_nodes(self, x, query_pool, batch, top_k=5):
+        """
+        batchs x: node embeddings [batch_nodes_num, embed_dim]
+        batchs query_pool: query [batch_query_num, embed_dim]
+        batchs batch: node embedding index in current batch [batch_nodes_num]
+        top_k: select top_k nodes as initial nodes
+        """
+        x = x.to(query_pool.device)
+        batch_size = query_pool.shape[0]
+        num_nodes = x.shape[0]
+        
+        # expand query to each graph, then compute cosine similarity
+        query_expanded = query_pool[batch]  # [batch_nodes_num, embed_dim]
+        similarities = F.cosine_similarity(x, query_expanded, dim=1)  # [batch_nodes_num]
+
+        # mask
+        p = torch.zeros(num_nodes, dtype=torch.float32, device=x.device)
+        for i in range(batch_size):
+            # i-th graph indices
+            graph_indices = (batch == i).nonzero(as_tuple=True)[0]
+            
+            if len(graph_indices) == 0:
+                continue
+                
+            graph_similarities = similarities[graph_indices]
+            _, topk_local_indices = torch.topk(
+                graph_similarities, 
+                k=min(top_k, len(graph_indices))
+            )
+            
+            # top_k indices in one graph
+            topk_global_indices = graph_indices[topk_local_indices]
+            p[topk_global_indices] = 1.0
+        
+        return p / top_k
+    
+    def get_min_distance_to_target_optimized(self, data):
+        seed_nodes = data.p_0.cpu().numpy() if torch.is_tensor(data.p_0) else np.array(data.p_0)
+        target_nodes = torch.where(data.category == 1)[0].cpu().numpy()
+        
+        if len(seed_nodes) == 0 or len(target_nodes) == 0:
+            return -1
+        
+        # 构建邻接表
+        edge_index = data.edge_index.cpu().numpy()
+        adj_list = {}
+        
+        for i in range(edge_index.shape[1]):
+            src, dst = edge_index[0, i], edge_index[1, i]
+            adj_list.setdefault(src, []).append(dst)
+            adj_list.setdefault(dst, []).append(src)
+        
+        # 多源BFS从种子节点开始
+        visited_from_seed = {}
+        queue_from_seed = deque()
+        
+        for seed in seed_nodes:
+            visited_from_seed[seed] = 0
+            queue_from_seed.append(seed)
+        
+        # 从目标节点开始的BFS
+        visited_from_target = {}
+        queue_from_target = deque()
+        
+        for target in target_nodes:
+            visited_from_target[target] = 0
+            queue_from_target.append(target)
+        
+        # 双向BFS
+        while queue_from_seed and queue_from_target:
+            # 从种子节点方向扩展
+            current_size = len(queue_from_seed)
+            for _ in range(current_size):
+                node = queue_from_seed.popleft()
+                
+                if node in visited_from_target:
+                    return visited_from_seed[node] + visited_from_target[node] - 1
+                
+                if node in adj_list:
+                    for neighbor in adj_list[node]:
+                        if neighbor not in visited_from_seed:
+                            visited_from_seed[neighbor] = visited_from_seed[node] + 1
+                            queue_from_seed.append(neighbor)
+            
+            # 从目标节点方向扩展
+            current_size = len(queue_from_target)
+            for _ in range(current_size):
+                node = queue_from_target.popleft()
+                
+                if node in visited_from_seed:
+                    return visited_from_seed[node] + visited_from_target[node] - 1
+                
+                if node in adj_list:
+                    for neighbor in adj_list[node]:
+                        if neighbor not in visited_from_target:
+                            visited_from_target[neighbor] = visited_from_target[node] + 1
+                            queue_from_target.append(neighbor)
+        
+        return -1
 
     def train(self):
         """
@@ -287,12 +411,37 @@ class GCNReasonerTrainer:
                 inputs = {k: v.to(self.device) for k, v in inputs.items()}
                 with torch.no_grad():
                     query_embeddings = self.embed_model(**inputs).last_hidden_state
-                
+                query_pool = self.get_pool_query(query_embeddings, inputs["attention_mask"].unsqueeze(-1))
                 for i, data in enumerate(batchs):
                     data.query = query_embeddings[i].unsqueeze(0)
                     data.query_mask = inputs["attention_mask"][i].view(1, -1, 1)
-                
+                    data.query_pool = query_pool[i].unsqueeze(0)
+                    data.p_0 = self.init_nodes(data.x, 
+                                               query_pool[i].unsqueeze(0), 
+                                               torch.zeros(data.x.size(0), dtype=torch.int).to(self.device), 
+                                               top_k=self.top_k)
+                    # distance = self.get_min_distance_to_target_optimized(data)
+                    # print("distance: ", distance)
+                    if data.x.shape[0] > self.subgraph_limit:
+                        # print("before subgraph: ", data.x.shape[0])
+                        target_nodes = torch.where(data.category == 1.)[0].to(self.device)
+                        seed_nodes = torch.where(data.p_0 > 0)[0]
+                        node_idx = torch.cat([seed_nodes, target_nodes]).unique()
+
+                        sampler = NeighborSampler(data.edge_index, node_idx=node_idx,
+                                sizes=self.num_neighbors, batch_size=len(node_idx),
+                                shuffle=False, num_workers=4)
+                        
+                        _, n_id, _ = next(iter(sampler))
+        
+                        subgraph_data = data.subgraph(n_id)
+                        data.x = subgraph_data.x
+                        data.edge_index = subgraph_data.edge_index
+                        data.p_0 = data.p_0[n_id]
+                        data.category = data.category[n_id]
+    
                 # Forward pass
+                # reporter = MemReporter(self.model)
                 logit = self.model(batchs)
                 logits = []
                 begin = 0
@@ -326,6 +475,7 @@ class GCNReasonerTrainer:
                     self.scheduler.step(loss.item())
 
                 torch.cuda.empty_cache()
+                gc.collect()
 
             # Average loss for the epoch
             avg_loss = epoch_loss / len(data_loader)

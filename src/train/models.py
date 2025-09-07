@@ -2,6 +2,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import gc
 from torch_geometric.utils import scatter
 from torch_geometric.nn import GCNConv
 
@@ -11,16 +12,14 @@ class GCNReaonser(nn.Module):
     """
     def __init__(self, num_classes, 
                  training=True, 
-                 dropout=0.2, 
-                 top_k=5, 
+                 dropout=0.2,  
                  instruction_num=4,
                  num_iter=3,
-                 num_layers=3,
+                 num_layers=4,
                  embed_dim=1024):
         super(GCNReaonser, self).__init__()
         self.dropout = dropout
         self.training = training
-        self.top_k = top_k
         self.instruction_num = instruction_num
         self.num_iter = num_iter
         self.embed_dim = embed_dim
@@ -50,52 +49,6 @@ class GCNReaonser(nn.Module):
             setattr(self, f'W_h_{l}', nn.Linear((self.instruction_num + 1) * self.embed_dim, self.embed_dim, bias=False))
         
         self.w = nn.Parameter(torch.randn(self.embed_dim))
-
-    def init_nodes(self, x, query_pool, batch, top_k=5):
-        """
-        batchs x: node embeddings [batch_nodes_num, embed_dim]
-        batchs query_pool: query [batch_query_num, embed_dim]
-        batchs batch: node embedding index in current batch [batch_nodes_num]
-        top_k: select top_k nodes as initial nodes
-        """
-        batch_size = query_pool.shape[0]
-        num_nodes = x.shape[0]
-        
-        # expand query to each graph, then compute cosine similarity
-        query_expanded = query_pool[batch]  # [batch_nodes_num, embed_dim]
-        similarities = F.cosine_similarity(x, query_expanded, dim=1)  # [batch_nodes_num]
-
-        # mask
-        p = torch.zeros(num_nodes, dtype=torch.float32, device=x.device)
-        for i in range(batch_size):
-            # i-th graph indices
-            graph_indices = (batch == i).nonzero(as_tuple=True)[0]
-            
-            if len(graph_indices) == 0:
-                continue
-                
-            graph_similarities = similarities[graph_indices]
-            _, topk_local_indices = torch.topk(
-                graph_similarities, 
-                k=min(top_k, len(graph_indices))
-            )
-            
-            # top_k indices in one graph
-            topk_global_indices = graph_indices[topk_local_indices]
-            p[topk_global_indices] = 1.0
-        
-        return p / top_k
-    
-    def get_pool_query(self, query, query_mask):
-        masked_query = query * query_mask
-    
-        valid_token_count = query_mask.sum(dim=1)  # [batch_query_num, 1]
-        valid_token_count = torch.clamp(valid_token_count, min=1.0)
-        
-        # pooling at dim 1
-        sum_query = masked_query.sum(dim=1)  # 形状 [batch_query_num, embed_dim]
-        mean_query = sum_query / valid_token_count
-        return mean_query
     
     def init_instructions(self, query, query_mask, query_pool):
         """
@@ -204,42 +157,73 @@ class GCNReaonser(nn.Module):
         updated_instructions = torch.stack(updated_instructions, dim=1)  # [batch_query_num, instruction_num, embed_dim]
         return updated_instructions
         
+    # def update_nodes(self, h_l, p_l, instructions, edge_index, batch_idx, layer_idx):
+    #     """
+    #     h_l: [batch_nodes_num, embed_dim]
+    #     p_l: [batch_nodes_num]
+    #     instructions: [batch_query_num, instruction_num, embed_dim]
+    #     edge_index: [2, E]
+    #     batch_idx: [batch_nodes_num]
+    #     """
+    #     W_x = getattr(self, f'W_x_{layer_idx}')
+    #     W_h = getattr(self, f'W_h_{layer_idx}')
+
+    #     src_nodes, dst_nodes = edge_index
+        
+    #     # [E, instruction_num, embed_dim]
+    #     expanded_instructions = instructions[batch_idx[src_nodes]]
+    #     # E, embed_dim]
+    #     neighbor_h = W_x(h_l[src_nodes])
+    #     # (I^(k) ⊙ W_X h_v') [E, instruction_num, embed_dim]
+    #     messages = expanded_instructions * neighbor_h.unsqueeze(1)
+    #     c_vk = F.relu(messages)  # [E, instruction_num, embed_dim]
+        
+    #     # [E, 1, 1]
+    #     p_weights = p_l[src_nodes].view(-1, 1, 1)
+    #     # [E, instruction_num, embed_dim]
+    #     weighted_messages = p_weights * c_vk
+        
+    #     # [batch_nodes_num, instruction_num, embed_dim]
+    #     aggregated = scatter(weighted_messages, dst_nodes, dim=0, 
+    #                         dim_size=h_l.size(0), reduce='sum')
+        
+    #     # [batch_nodes_num, instruction_num * embed_dim]
+    #     h_ins = aggregated.view(h_l.size(0), -1)  # [N, Q*D]
+    #     combined = torch.cat([h_l, h_ins], dim=1)
+    #     h_new = F.relu(W_h(combined))  # [N, D]
+        
+    #     # score for nodes
+    #     scores = torch.matmul(h_new, self.w)
+    #     p_new = F.softmax(scores, dim=0)
+        
+    #     return h_new, p_new
     def update_nodes(self, h_l, p_l, instructions, edge_index, batch_idx, layer_idx):
-        """
-        h_l: [batch_nodes_num, embed_dim]
-        p_l: [batch_nodes_num]
-        instructions: [batch_query_num, instruction_num, embed_dim]
-        edge_index: [2, E]
-        batch_idx: [batch_nodes_num]
-        """
         W_x = getattr(self, f'W_x_{layer_idx}')
         W_h = getattr(self, f'W_h_{layer_idx}')
-
+        
         src_nodes, dst_nodes = edge_index
         
-        # [E, instruction_num, embed_dim]
-        expanded_instructions = instructions[batch_idx[src_nodes]]
-        # E, embed_dim]
-        neighbor_h = W_x(h_l[src_nodes])
-        # (I^(k) ⊙ W_X h_v') [E, instruction_num, embed_dim]
-        messages = expanded_instructions * neighbor_h.unsqueeze(1)
-        c_vk = F.relu(messages)  # [E, instruction_num, embed_dim]
+        # 预计算节点级别的变换 [N, embed_dim]
+        transformed_h = W_x(h_l)
         
-        # [E, 1, 1]
-        p_weights = p_l[src_nodes].view(-1, 1, 1)
-        # [E, instruction_num, embed_dim]
-        weighted_messages = p_weights * c_vk
+        # 预计算节点级别的指令 [N, instruction_num, embed_dim]
+        node_instructions = instructions[batch_idx]
         
-        # [batch_nodes_num, instruction_num, embed_dim]
-        aggregated = scatter(weighted_messages, dst_nodes, dim=0, 
+        # 避免重复计算：先计算节点级别的message components
+        # [N, instruction_num, embed_dim]
+        node_messages = F.relu(node_instructions * transformed_h.unsqueeze(1))
+        
+        # [N, instruction_num, embed_dim]
+        weighted_node_messages = p_l.view(-1, 1, 1) * node_messages
+        
+        # 使用scatter直接聚合，避免中间大矩阵
+        aggregated = scatter(weighted_node_messages[src_nodes], dst_nodes, dim=0,
                             dim_size=h_l.size(0), reduce='sum')
         
-        # [batch_nodes_num, instruction_num * embed_dim]
-        h_ins = aggregated.view(h_l.size(0), -1)  # [N, Q*D]
+        h_ins = aggregated.view(h_l.size(0), -1)
         combined = torch.cat([h_l, h_ins], dim=1)
-        h_new = F.relu(W_h(combined))  # [N, D]
+        h_new = F.relu(W_h(combined))
         
-        # score for nodes
         scores = torch.matmul(h_new, self.w)
         p_new = F.softmax(scores, dim=0)
         
@@ -260,14 +244,17 @@ class GCNReaonser(nn.Module):
         query_mask = batchs.query_mask
         batch_idx = batchs.batch
         edge_index = batchs.edge_index
-        query_pool = self.get_pool_query(query, query_mask)
+        query_pool = batchs.query_pool
+        p_0 = batchs.p_0
+        # query_pool = self.get_pool_query(query, query_mask)
 
-        p_0 = self.init_nodes(x, query_pool, batch_idx, self.top_k)
+        # p_0 = self.init_nodes(x, query_pool, batch_idx, self.top_k)
+        p_buffer = p_0.detach()
         instructions = self.init_instructions(query, query_mask, query_pool) # [batch_query_num, instruction_num, embed_dim]
         h_in = x
 
-        for _ in range(self.num_iter):
-            p_l = p_0.clone()  # 每个 stage 都从种子实体开始推理
+        for t in range(self.num_iter):
+            p_l = p_0 if t == 0 else p_buffer.detach()  # 每个 stage 都从种子实体开始推理
             h_current = h_in
             for l in range(self.num_layers):
                 h_next, p_next = self.update_nodes(h_current, p_l, instructions, edge_index, batch_idx, l)
@@ -280,29 +267,39 @@ class GCNReaonser(nn.Module):
         
         return p_out
 
-        # x = query * x
-        # residuals = [x]  # residual
-        
-        # # GCN + ReLU + Dropout
-        # for i, conv in enumerate(self.convs[:-1]):
-        #     x_conv = conv(x, edge_index)
-            
-        #     if residuals[i].size(1) == x_conv.size(1):
-        #         x_conv = x_conv + residuals[i]
-            
-        #     x = F.relu(x_conv)
-        #     residuals.append(x)
-        
-        # # the last layer
-        # x = self.convs[-1](x, edge_index)
-        # if residuals[-1].size(1) == x.size(1):
-        #     x = x + residuals[-1]
+    # def forward(self, batchs):
+    #     x = batchs.x
+    #     query = batchs.query
+    #     query_mask = batchs.query_mask
+    #     batch_idx = batchs.batch
+    #     edge_index = batchs.edge_index
+    #     query_pool = self.get_pool_query(query, query_mask)
 
-        # # final layer
-        # x = self.classifier(x)
-        # if self.training:
-        #     x = F.dropout(x, p=self.dropout, training=self.training)
-        # return x
+    #     p_0 = self.init_nodes(x, query_pool, batch_idx, self.top_k)
+    #     instructions = self.init_instructions(query, query_mask, query_pool)  # [batch_query_num, instruction_num, embed_dim]
+        
+    #     h_in = x.clone()
+    #     p_buffer = p_0.detach()
+    #     h_buffer = torch.zeros_like(h_in)
+
+    #     for iter_idx in range(self.num_iter):
+    #         p_l = p_0 if iter_idx == 0 else p_buffer.detach()
+            
+    #         h_current = h_in
+    #         for l in range(self.num_layers):
+    #             h_next, p_next = self.update_nodes(h_current, p_l, instructions, edge_index, batch_idx, l)
+    #             h_buffer.copy_(h_next)
+    #             p_buffer.copy_(p_next)
+    #             h_current = h_buffer
+    #             p_l = p_buffer
+            
+    #         h_out = h_current
+    #         p_out = p_l
+            
+    #         instructions = self.update_instructions(p_0, h_out, instructions, batch_idx)
+    #         h_in.copy_(h_out)
+        
+    #     return p_out
 
     def reset_parameters(self):
         for conv in self.convs:
