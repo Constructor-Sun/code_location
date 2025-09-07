@@ -66,6 +66,8 @@ class GCNReasonerTrainer:
         save_path="saved_models",
         log_file=None,
         device="cuda" if torch.cuda.is_available() else "cpu",
+        threshold=0.5, 
+        max_nodes=10,
         focal_loss_params=None
     ):
         """
@@ -94,6 +96,8 @@ class GCNReasonerTrainer:
         self.num_classes = num_classes
         self.checkpoint_dir = save_path
         self.log_file = os.path.join(save_path, log_file)
+        self.threshold = threshold
+        self.max_nodes = max_nodes
 
         # Move model to device(s)
         if self.device == "cuda" and torch.cuda.device_count() > 1:
@@ -126,25 +130,25 @@ class GCNReasonerTrainer:
         # Initialize metrics storage
         self.training_metrics = []
 
-    def log_metrics(self, epoch, avg_loss, precision_0, precision_1):
+    def log_metrics(self, epoch, avg_loss, precision, recall):
         """
         Log training metrics for an epoch.
         
         Args:
             epoch: Current epoch number
             avg_loss: Average loss for the epoch
-            precision_0: Precision for class 0
-            precision_1: Precision for class 1
+            precision: 
+            recall: 
         """
         metrics = {
             'epoch': epoch + 1,
             'avg_loss': avg_loss,
-            'precision_class_0': precision_0,
-            'precision_class_1': precision_1
+            'precision': precision,
+            'recall': recall
         }
         self.training_metrics.append(metrics)
         print(f"Epoch {epoch+1}/{self.epochs}, Loss: {avg_loss:.4f}, "
-              f"Precision (Class 0): {precision_0:.4f}, Precision (Class 1): {precision_1:.4f}")
+              f"Precision (Class 0): {precision:.4f}, Precision (Class 1): {recall:.4f}")
 
     def save_metrics(self):
         """
@@ -166,48 +170,70 @@ class GCNReasonerTrainer:
         return torch.load(pt_path, weights_only=False)
     
 
-    def kl_loss(self, pred_list, target_list):
-        """
-        Calculate KL divergence loss for a batch of predictions and targets.
+    # def kl_loss(self, pred_list, target_list):
+    #     """
+    #     Calculate KL divergence loss for a batch of predictions and targets.
         
-        Args:
-            pred_list (list): List of tensors, each of shape [num_nodes, 2], containing logits.
-            target_list (list): List of tensors, each of shape [num_nodes], containing binary labels (0 or 1).
+    #     Args:
+    #         pred_list (list): List of tensors, each of shape [num_nodes, 2], containing logits.
+    #         target_list (list): List of tensors, each of shape [num_nodes], containing binary labels (0 or 1).
             
-        Returns:
-            torch.Tensor: Average KL divergence loss across the batch.
-        """
+    #     Returns:
+    #         torch.Tensor: Average KL divergence loss across the batch.
+    #     """
+    #     assert len(pred_list) == len(target_list), "pred_list and target_list must have the same length"
+    #     batch_size = len(pred_list)
+    #     total_loss = 0.0
+    #     valid_samples = 0
+        
+    #     for i in range(batch_size):
+    #         pred = pred_list[i]  # Shape: [num_nodes, 2]
+    #         target = target_list[i]  # Shape: [num_nodes]
+            
+    #         # Convert logits to probabilities via softmax
+    #         pred_prob = F.softmax(pred, dim=1)  # Shape: [num_nodes, 2]
+    #         pred_prob = pred_prob.clamp(min=VERY_SMALL_NUMBER)  # Avoid log(0)
+            
+    #         # Convert target to probability distribution
+    #         target_prob = torch.zeros_like(pred)  # Shape: [num_nodes, 2]
+    #         target_prob[:, 1] = target.float()  # Positive class (1) probability
+    #         target_prob[:, 0] = 1.0 - target.float()  # Negative class (0) probability
+            
+    #         # Normalize target to sum to 1 per node (if not already normalized)
+    #         answer_number = torch.sum(target)
+    #         if answer_number > 0:  # Only include samples with at least one positive label
+    #             # Compute KL divergence
+    #             log_pred_prob = torch.log(pred_prob)
+    #             loss = self.criterion(log_pred_prob, target_prob)  # Shape: scalar (sum reduction)
+    #             total_loss += loss
+    #             valid_samples += 1
+        
+    #     # Compute average loss
+    #     if valid_samples == 0:
+    #         return torch.tensor(0.0, device=pred_list[0].device, requires_grad=True)
+    #     avg_loss = total_loss / valid_samples
+    #     return avg_loss
+
+    def kl_loss(self, pred_list, target_list):
         assert len(pred_list) == len(target_list), "pred_list and target_list must have the same length"
         batch_size = len(pred_list)
         total_loss = 0.0
         valid_samples = 0
-        
+
         for i in range(batch_size):
-            pred = pred_list[i]  # Shape: [num_nodes, 2]
-            target = target_list[i]  # Shape: [num_nodes]
-            
-            # Convert logits to probabilities via softmax
-            pred_prob = F.softmax(pred, dim=1)  # Shape: [num_nodes, 2]
-            pred_prob = pred_prob.clamp(min=VERY_SMALL_NUMBER)  # Avoid log(0)
-            
-            # Convert target to probability distribution
-            # num_nodes = target.size(0)
-            target_prob = torch.zeros_like(pred)  # Shape: [num_nodes, 2]
-            target_prob[:, 1] = target.float()  # Positive class (1) probability
-            target_prob[:, 0] = 1.0 - target.float()  # Negative class (0) probability
-            
-            # Normalize target to sum to 1 per node (if not already normalized)
-            answer_number = torch.sum(target)
-            if answer_number > 0:  # Only include samples with at least one positive label
-                # Compute KL divergence
-                log_pred_prob = torch.log(pred_prob)
-                loss = self.criterion(log_pred_prob, target_prob)  # Shape: scalar (sum reduction)
+            pred = pred_list[i]
+            target = target_list[i]
+            target = target / target.sum()
+            target_sum = target.sum()
+            if target_sum > 0:
+                pred_log = torch.log(pred)
+                loss = self.criterion(pred_log, target)  # Shape: scalar (sum reduction)
                 total_loss += loss
                 valid_samples += 1
         
-        # Compute average loss
         if valid_samples == 0:
-            return torch.tensor(0.0, device=pred_list[0].device, requires_grad=True)
+            return torch.tensor(0.0, device=pred_list[0].device, requires_grad=True) 
+        
         avg_loss = total_loss / valid_samples
         return avg_loss
 
@@ -238,7 +264,7 @@ class GCNReasonerTrainer:
 
         for epoch in epoch_pbar:
             epoch_loss = 0.0
-            all_preds = []
+            all_predictions = []
             all_labels = []
             batch_pbar = tqdm(data_loader, desc=f"Epoch {epoch+1}/{self.epochs}", 
                          leave=False, unit="batch")
@@ -268,13 +294,14 @@ class GCNReasonerTrainer:
                 
                 # Forward pass
                 logit = self.model(batchs)
-                output = []
+                logits = []
                 begin = 0
                 for label in category:
-                    pred = logit[begin:begin+len(label), :]
+                    pred = logit[begin:begin+len(label)]
                     begin += len(label)
-                    output.append(pred)
-                loss = self.kl_loss(output, category)
+                    logits.append(pred)
+                category = [label.to(self.device) for label in category]
+                loss = self.kl_loss(logits, category)
 
                 # Backward pass
                 loss.backward()
@@ -288,10 +315,11 @@ class GCNReasonerTrainer:
                 })
 
                 # Collect predictions and labels for precision
-                pred = logit.argmax(dim=1).cpu().numpy()
-                labels = torch.cat(category).cpu().numpy()
-                all_preds.extend(pred)
-                all_labels.extend(labels)
+                predictions = self.get_predict_nodes(logits, self.threshold, self.max_nodes)
+                predictions = [prediction.cpu() for prediction in predictions]
+                category = [cate.cpu() for cate in category]
+                all_predictions.extend(predictions)
+                all_labels.extend(category)
 
                 # Update scheduler if applicable
                 if self.scheduler and isinstance(self.scheduler, ReduceLROnPlateau):
@@ -304,12 +332,12 @@ class GCNReasonerTrainer:
             losses.append(avg_loss)
 
             # Calculate precision for each class
-            precision, _, _, _ = precision_recall_fscore_support(
-                all_labels, all_preds, labels=[0, 1], zero_division=0
+            precision, recall = self.precision_and_recall(
+                all_labels, all_predictions
             )
 
             # Log metrics
-            self.log_metrics(epoch, avg_loss, precision[0], precision[1])
+            self.log_metrics(epoch, avg_loss, precision, recall)
 
             # Step scheduler if not ReduceLROnPlateau
             if self.scheduler and not isinstance(self.scheduler, ReduceLROnPlateau):
@@ -320,6 +348,79 @@ class GCNReasonerTrainer:
             self.save_checkpoint()
 
         return losses
+    
+    def get_predict_nodes(self, logits, threshold = 0.5, max_nodes = 10):
+        predictions = []
+        
+        for i, logit in enumerate(logits):
+            probs = logit
+            # if logit.dim() == 1:
+            #     probs = logit
+            # else:
+            #     probs = torch.softmax(logit, dim=-1)
+            
+            # sort in a descendent way
+            sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+            
+            selected_indices = []
+            cumulative_prob = 0.0
+            count = 0
+            
+            # select nodes
+            for j in range(len(sorted_probs)):
+                if (cumulative_prob + sorted_probs[j].item() <= threshold and 
+                    count < max_nodes and 
+                    sorted_probs[j].item() > 1e-8):  # 忽略概率极小的节点
+                    
+                    selected_indices.append(sorted_indices[j].item())
+                    cumulative_prob += sorted_probs[j].item()
+                    count += 1
+                else:
+                    break
+            
+            predictions.append(torch.tensor(selected_indices, dtype=torch.long))
+        
+        return predictions
+
+    def precision_and_recall(self, predictions, labels):
+        assert len(predictions) == len(labels), "Predictions and labels must have the same length"
+        
+        total_precision = 0.0
+        total_recall = 0.0
+        total_hits = 0.0
+        num_samples = len(predictions)
+        
+        for pred, label in zip(predictions, labels):
+            pred_set = set(pred.tolist())
+            label_set = set(label.tolist())
+            
+            tp = len(pred_set & label_set)
+            fp = len(pred_set - label_set)
+            fn = len(label_set - pred_set)
+            
+            # precision, recall
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            
+            # F1-score
+            if precision + recall > 0:
+                f1 = 2 * precision * recall / (precision + recall)
+            else:
+                f1 = 0.0
+            
+            # hits
+            hits = 1.0 if len(pred_set & label_set) > 0 else 0.0
+            
+            total_precision += precision
+            total_recall += recall
+            total_hits += hits
+        
+        avg_precision = total_precision / num_samples
+        avg_recall = total_recall / num_samples
+        avg_f1 = 2 * avg_precision * avg_recall / (avg_precision + avg_recall) if (avg_precision + avg_recall) > 0 else 0.0
+        avg_hits = total_hits / num_samples
+        
+        return avg_precision, avg_recall
 
     def evaluate(self, test_data_list):
         """
@@ -334,7 +435,7 @@ class GCNReasonerTrainer:
         """
         self.model.eval()
         total_loss = 0.0
-        all_preds = []
+        all_predictions = []
         all_labels = []
 
         # Create custom dataset for lazy loading
@@ -367,7 +468,7 @@ class GCNReasonerTrainer:
                 # Collect predictions and labels for metrics
                 pred = output.argmax(dim=1).cpu().numpy()
                 labels = category.cpu().numpy()
-                all_preds.extend(pred)
+                all_predictions.extend(pred)
                 all_labels.extend(labels)
 
         avg_loss = total_loss / len(data_loader)

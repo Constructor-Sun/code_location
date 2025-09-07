@@ -160,15 +160,19 @@ class GCNReaonser(nn.Module):
         
         return instructions
 
-    def update_instructions(self, p_0, node_embeddings, instructions):
+    def update_instructions(self, p_0, node_embeddings, instructions, batch_idx):
         seed_mask = (p_0 > 0)
         seed_indices = seed_mask.nonzero(as_tuple=True)[0]
         seed_embeddings = node_embeddings[seed_indices]
+        seed_batch_indices = batch_idx[seed_indices]
         
-        # Compute h_e by summing seed entity representations
-        # TODO: h_e cannot be summed directly. One graph has one h_e
-        h_e = seed_embeddings.sum(dim=0)  # [embed_dim]
-        h_e_expanded = h_e.unsqueeze(0).unsqueeze(0)  # [1, 1, embed_dim]
+        # One graph has one h_e. Use scatter_add_ to compute seed_embeddings for each graph
+        num_graphs = batch_idx.max().item() + 1
+        h_e = torch.zeros((num_graphs, node_embeddings.size(1)), 
+                        device=node_embeddings.device)
+        h_e.scatter_add_(0, 
+                        seed_batch_indices.unsqueeze(1).expand(-1, node_embeddings.size(1)), 
+                        seed_embeddings) # [batch_query_num, embed_dim]
         
         # Process each instruction
         updated_instructions = []
@@ -177,9 +181,9 @@ class GCNReaonser(nn.Module):
             # Prepare the concatenated features
             concat_features = torch.cat([
                 i_k,
-                h_e_expanded.expand_as(i_k),
-                i_k - h_e_expanded.expand_as(i_k),
-                i_k * h_e_expanded.expand_as(i_k)
+                h_e,
+                i_k - h_e,
+                i_k * h_e
             ], dim=-1)  # [batch_query_num, 4 * embed_dim]
             
             # Apply linear transformation
@@ -271,7 +275,7 @@ class GCNReaonser(nn.Module):
                 p_l = p_next
             h_out = h_current
             p_out = p_l
-            instructions = self.update_instructions(p_0, h_out, instructions)
+            instructions = self.update_instructions(p_0, h_out, instructions, batch_idx)
             h_in = h_out
         
         return p_out

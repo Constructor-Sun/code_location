@@ -36,6 +36,6 @@ class GraphDataset(Dataset):
 
         # print("graph_data: ", graph_data)
         # print("graph_data.query;", graph_data.query.shape)
-        # print("graph_data.category:", graph_data.category.shape)
+        # print("graph_data.category:", graph_data.category.sum())
         
         return graph_data

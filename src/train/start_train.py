@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--optimizer", type=str, default="AdamW")
     parser.add_argument("--scheduler", type=str, default="ReduceLROnPlateau")
     parser.add_argument('--epochs', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_processes', type=int, default=torch.cuda.device_count())
     args = parser.parse_args()
 
