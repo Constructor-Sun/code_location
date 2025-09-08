@@ -226,6 +226,9 @@ class GCNReaonser(nn.Module):
         
         scores = torch.matmul(h_new, self.w)
         p_new = F.softmax(scores, dim=0)
+        if torch.isnan(scores).any() or torch.isinf(scores).any():
+            print("Warning: scores contains nan or inf!")
+            print("scores:", scores)
         
         return h_new, p_new
         

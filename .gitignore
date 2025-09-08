@@ -9,10 +9,13 @@ plots/
 train_index/
 trash/
 saved_models/
+Salesforce/
 
-# do not include log files
+# do not include data files
 *.log
 *.log.*
 *.json
 log/
 logs/
+*.pickle
+*.pickle.*

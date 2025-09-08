@@ -1,5 +1,6 @@
 import os
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import json
 import torch
 # torch.cuda.memory._record_memory_history(True, trace_alloc_max_entries=100000, trace_alloc_record_context=True)
@@ -107,8 +108,8 @@ class GCNReasonerTrainer:
         self.threshold = threshold
         self.top_k = top_k
         self.max_nodes = max_nodes
-        self.num_neighbors = [30, 30, 30]
-        self.subgraph_limit = 5 * np.prod(self.num_neighbors)
+        self.num_neighbors = [40, 40, 30]
+        self.subgraph_limit = np.prod(self.num_neighbors) / 3 * 2
 
         # Move model to device(s)
         if self.device == "cuda" and torch.cuda.device_count() > 1:
@@ -243,6 +244,8 @@ class GCNReasonerTrainer:
                 if not torch.isnan(loss) and not torch.isinf(loss):
                     total_loss += loss
                     valid_samples += 1
+                else:
+                    print('pred_list in non loss: ', pred_list)
         
         if valid_samples == 0:
             return torch.tensor(0.0, device=pred_list[0].device, requires_grad=True) 
@@ -395,15 +398,12 @@ class GCNReasonerTrainer:
 
             for batch_idx, batchs in enumerate(batch_pbar):
                 self.optimizer.zero_grad()
-
                 # Move batch to device
                 # Extract query, category, and graph data
-                category = []
                 query = []
-                # ori_category = torch.cat(category)
+                category = []
                 for data in batchs:
                     query.append(data.query)
-                    category.append(data.category)
 
                 # get issue(query) embeddings
                 inputs = self.tokenizer(query, return_tensors="pt", truncation=True, 
@@ -413,18 +413,18 @@ class GCNReasonerTrainer:
                     query_embeddings = self.embed_model(**inputs).last_hidden_state
                 query_pool = self.get_pool_query(query_embeddings, inputs["attention_mask"].unsqueeze(-1))
                 for i, data in enumerate(batchs):
-                    data.query = query_embeddings[i].unsqueeze(0)
-                    data.query_mask = inputs["attention_mask"][i].view(1, -1, 1)
-                    data.query_pool = query_pool[i].unsqueeze(0)
+                    data.query = query_embeddings[i].unsqueeze(0).cpu()
+                    data.query_mask = inputs["attention_mask"][i].view(1, -1, 1).cpu()
+                    data.query_pool = query_pool[i].unsqueeze(0).cpu()
                     data.p_0 = self.init_nodes(data.x, 
                                                query_pool[i].unsqueeze(0), 
                                                torch.zeros(data.x.size(0), dtype=torch.int).to(self.device), 
-                                               top_k=self.top_k)
+                                               top_k=self.top_k).cpu()
                     # distance = self.get_min_distance_to_target_optimized(data)
                     # print("distance: ", distance)
                     if data.x.shape[0] > self.subgraph_limit:
                         # print("before subgraph: ", data.x.shape[0])
-                        target_nodes = torch.where(data.category == 1.)[0].to(self.device)
+                        target_nodes = torch.where(data.category == 1.)[0]
                         seed_nodes = torch.where(data.p_0 > 0)[0]
                         node_idx = torch.cat([seed_nodes, target_nodes]).unique()
 
@@ -433,12 +433,12 @@ class GCNReasonerTrainer:
                                 shuffle=False, num_workers=4)
                         
                         _, n_id, _ = next(iter(sampler))
-        
                         subgraph_data = data.subgraph(n_id)
                         data.x = subgraph_data.x
                         data.edge_index = subgraph_data.edge_index
                         data.p_0 = data.p_0[n_id]
                         data.category = data.category[n_id]
+                    category.append(data.category)
     
                 # Forward pass
                 # reporter = MemReporter(self.model)
@@ -649,7 +649,7 @@ class GCNReasonerTrainer:
             'scheduler': self.scheduler,
             'epoch': self.epochs
         }
-        model_name = os.path.join(self.checkpoint_dir, f"{self.experiment_name}-{reason}.ckpt")
+        model_name = os.path.join(self.checkpoint_dir, f"CodeReasoner-{reason}.ckpt")
         torch.save(checkpoint, model_name)
         print(f"Best {reason}, save model as {model_name}")
 
