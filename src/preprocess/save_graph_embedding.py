@@ -21,7 +21,6 @@ def embed_text_batch(tokenizer, model, texts, max_length=2048):
     if isinstance(texts, str):
         texts = [texts]
     inputs = tokenizer(texts, return_tensors="pt", truncation=True, max_length=max_length, padding="longest")
-    print(inputs['input_ids'].shape)
     if inputs['input_ids'].shape[-1] > max_length:
         print("some inputs exceed max length")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
@@ -171,7 +170,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="czlll/SWE-bench_Lite")
     parser.add_argument("--index_dir", type=str, default="index_data")
-    parser.add_argument("--graph_name", type=str, default="graph_index_v2.3")
+    parser.add_argument("--graph_name", type=str, default="graph_index_v1.0")
+    parser.add_argument("--save_name", type=str, default="graph_embedding_SweRank")
     parser.add_argument("--model_path", type=str, default="Qwen/Qwen3-Embedding-0.6B")
     parser.add_argument('--num_processes', type=int, default=torch.cuda.device_count())
     parser.add_argument('--batch_size', type=int, default=4)
@@ -180,7 +180,7 @@ def main():
     mp.set_start_method('spawn', force=True)
     dataset_name = args.dataset.split('/')[-1]
     args.graph_dir = f'{args.index_dir}/{dataset_name}/{args.graph_name}/'
-    args.index_dir = f'{args.index_dir}/{dataset_name}/graph_embedding_pool/'
+    args.index_dir = f'{args.index_dir}/{dataset_name}/{args.save_name}/'
     print("graph_dir: ", args.graph_dir)
     print("index_dir: ", args.index_dir)
     os.makedirs(args.index_dir, exist_ok=True)
@@ -200,7 +200,7 @@ def main():
         print("No GPU available, using CPU")
         device = torch.device("cpu")
         tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
-        model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True)
+        model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, add_pooling_layer=False)
         model = model.to(device)
         for graph_file in graph_files:
             embed_graph_single_process(args.graph_dir, graph_file, args.index_dir, tokenizer, model, "cpu")
@@ -226,7 +226,7 @@ def main():
     for i in range(num_processes):
         # independent tokenizer and model for each process
         tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
-        model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True)
+        model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, add_pooling_layer=False)
         
         # create processes
         p = mp.Process(

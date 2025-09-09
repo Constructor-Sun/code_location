@@ -307,6 +307,10 @@ class GCNReasonerTrainer:
         if len(seed_nodes) == 0 or len(target_nodes) == 0:
             return -1
         
+        # 检查种子节点和目标节点是否有重叠
+        if set(seed_nodes) & set(target_nodes):
+            return 0
+        
         # 构建邻接表
         edge_index = data.edge_index.cpu().numpy()
         adj_list = {}
@@ -395,6 +399,7 @@ class GCNReasonerTrainer:
             all_labels = []
             batch_pbar = tqdm(data_loader, desc=f"Epoch {epoch+1}/{self.epochs}", 
                          leave=False, unit="batch")
+            distance = []
 
             for batch_idx, batchs in enumerate(batch_pbar):
                 self.optimizer.zero_grad()
@@ -402,8 +407,13 @@ class GCNReasonerTrainer:
                 # Extract query, category, and graph data
                 query = []
                 category = []
-                for data in batchs:
-                    query.append(data.query)
+                if self.embedding_model.split('/')[0] == 'Salesforce':
+                    query_prefix = 'Represent this query for searching relevant code: '
+                    for data in batchs:
+                        query.append(f"{query_prefix}{data.query}")
+                else:
+                    for data in batchs:
+                        query.append(data.query)
 
                 # get issue(query) embeddings
                 inputs = self.tokenizer(query, return_tensors="pt", truncation=True, 
@@ -420,8 +430,11 @@ class GCNReasonerTrainer:
                                                query_pool[i].unsqueeze(0), 
                                                torch.zeros(data.x.size(0), dtype=torch.int).to(self.device), 
                                                top_k=self.top_k).cpu()
-                    # distance = self.get_min_distance_to_target_optimized(data)
-                    # print("distance: ", distance)
+                    dis = self.get_min_distance_to_target_optimized(data)
+                    if dis != -1:
+                        distance.append(dis)
+                        # print("dis: ", dis)
+                    continue
                     if data.x.shape[0] > self.subgraph_limit:
                         # print("before subgraph: ", data.x.shape[0])
                         target_nodes = torch.where(data.category == 1.)[0]
@@ -439,7 +452,7 @@ class GCNReasonerTrainer:
                         data.p_0 = data.p_0[n_id]
                         data.category = data.category[n_id]
                     category.append(data.category)
-    
+                continue
                 # Forward pass
                 # reporter = MemReporter(self.model)
                 logit = self.model(batchs)
@@ -476,6 +489,8 @@ class GCNReasonerTrainer:
 
                 torch.cuda.empty_cache()
                 gc.collect()
+            print("distances: ", sum(distance) / len(distance))
+            print("variance: ", np.var(np.array(distance)))
 
             # Average loss for the epoch
             avg_loss = epoch_loss / len(data_loader)

@@ -25,7 +25,9 @@ def main():
     model = GCNReaonser(
         num_classes=2
     )
-
+    print("graph_embedding: ", args.graph_embedding)
+    print("embedding_model: ", args.embedding_model)
+    
     trainer = GCNReasonerTrainer(
         model = model,
         data_list = dataset,
