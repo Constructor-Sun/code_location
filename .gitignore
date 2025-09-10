@@ -19,3 +19,5 @@ log/
 logs/
 *.pickle
 *.pickle.*
+*.zip
+*.zip.*
