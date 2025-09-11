@@ -10,6 +10,8 @@ train_index/
 trash/
 saved_models/
 Salesforce/
+test_index/
+datasets/
 
 # do not include data files
 *.log
