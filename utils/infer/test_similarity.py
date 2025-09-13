@@ -30,10 +30,10 @@ def get_labels(project_embeddings, p):
     selected_nodes = [node for node, flag in zip(project_embeddings, p) if flag == 1.]
     return selected_nodes
 
-def get_ori_labels(y_path):
+def get_ori_label(y_path):
     df = pd.read_csv(os.path.join(y_path, "qrels", "test.tsv"), sep='\t', header=0)
     corpus_ids = df['corpus-id'].tolist()
-    print(corpus_ids)
+    return corpus_ids
 
 def init_nodes(x, query_pool, batch, top_k=5):
         """
@@ -71,8 +71,8 @@ def init_nodes(x, query_pool, batch, top_k=5):
 
 def get_top_nodes(tokenizer, model, query, graph_path, top_k):
     project_data = torch.load(graph_path, weights_only=False)
-    project_embeddings = project_data["embeddings"].to(model.device)
-    query_tokens = tokenizer(query, padding=True, truncation=True, return_tensors='pt', max_length=2048)
+    project_embeddings = torch.from_numpy(project_data["embeddings"])
+    query_tokens = tokenizer(query, padding="longest", truncation=True, return_tensors='pt', max_length=2048)
     query_tokens = {k: v.to(model.device) for k, v in query_tokens.items()}
     query_embed = model(**query_tokens).last_hidden_state.mean(dim=1)
     topk_similarities, topk_local_indices, p = init_nodes(project_embeddings, query_embed, torch.zeros(project_embeddings.shape[0], dtype=torch.int).to(model.device), top_k)
@@ -83,20 +83,25 @@ def main():
     parser.add_argument("--embed_dir", type=str, default="test_index")
     parser.add_argument("--test_dir", type=str, default="datasets")
     parser.add_argument("--dataset", type=str, default="swe-bench-lite")
-    parser.add_argument("--model", type=str, default="Salesforce/SweRankEmbed-Small")
+    parser.add_argument("--model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--top_k", type=int, default=10)
-    parser.add_argument("--target", type=str, default="swe-bench-lite-function_astropy__astropy-12907")
+    parser.add_argument("--target", type=str, default="sympy__sympy-18087")
     args = parser.parse_args()
+
+    args.target = args.dataset + '-function_' + args.target
+    query = get_query(os.path.join(args.test_dir, args.target, "queries.jsonl"))
+#     query = """
     
-    query = get_query(os.path.join(args.datasets, args.target, "queries.jsonl"))
+# """
     project_path = os.path.join(args.embed_dir, args.target + ".pt")
-    labels = get_ori_labels(os.path.join(args.datasets, args.target))
-    labels_index, project_embeddings = project_embeddings(project_path, labels)
+    labels = get_ori_label(os.path.join(args.test_dir, args.target))
+    labels_index, project_embeddings = convert_to_index(project_path, labels)
     tokenizer, model = load_model(args.model)
     top_nodes_dic, p = get_top_nodes(tokenizer, model, query, 
                                      project_path, 
                                      top_k=args.top_k)
     preds = get_labels(project_embeddings, p)
+    print("query: ", query)
     print("labels: ", labels)
     print("label index: ", labels_index)
     print()

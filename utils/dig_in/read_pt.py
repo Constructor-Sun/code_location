@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 def parse_data_object(data):
     print("Data object contents:")
     print("Keys:", data.keys)
+    print("function: ", len(data["function"]))
+    print("embeddings: ", data["embeddings"].shape)
     
     # Node features
     if hasattr(data, 'x'):
@@ -24,8 +26,13 @@ def parse_data_object(data):
     if hasattr(data, 'edge_type'):
         print(f"Edge_type: shape={data.edge_type.shape}")
 
+    if hasattr(data, 'function'):
+        print(f"Function: shape={data.function}")
+
+    if hasattr(data, 'embeddings'):
+        print(f"Embeddings: shape={data.embeddings}")
 
 # Example usage
-data = torch.load('index_data/SWE-bench_Lite/graph_embedding/django__django-11620.pt', map_location='cpu', weights_only=False)
+data = torch.load('test_index/swe-bench-lite-function_sympy__sympy-19007.pt', map_location='cpu', weights_only=False)
 
 parse_data_object(data)

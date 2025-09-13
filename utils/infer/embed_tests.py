@@ -18,9 +18,18 @@ def get_filenames_in_dir(directory_path):
 
 def get_example_names(dataset_path, dataset):
     folder_names = []
+    if dataset == "swe-bench-lite":
+        failed_file = "swebench_missed_instances.json"
+    elif dataset == "loc-bench":
+        failed_file = "locbench_missed_instances.json"
+    else:
+        raise KeyError("no matched dataset!")
+    failed_path = os.path.join(dataset_path, failed_file)
+    with open(failed_path, "r") as file:
+        failed_instances = json.load(file)
     for item in os.listdir(dataset_path):
         item_path = os.path.join(dataset_path, item)
-        if os.path.isdir(item_path) and item.startswith(dataset):
+        if os.path.isdir(item_path) and item.startswith(dataset) and item.split('_', 1)[1] in failed_instances:
             folder_names.append(item)
     return folder_names
 
@@ -46,6 +55,7 @@ def embed_text_batch(tokenizer, model, texts, max_length=2048):
 
 def embed_codes(tokenizer, model, content_list, batch_size, max_length=2048):
     embedding_dim = model.config.hidden_size  # Get embedding dimension from model
+    print("embeding_dim_:", embedding_dim)
     embeddings = np.empty((len(content_list), embedding_dim), dtype=np.float32)
     
     indices_and_lengths = [(i, len(tokenizer.encode(content, add_special_tokens=False)))
@@ -81,7 +91,7 @@ def embed_item_single_process(dataset_path, item, save_dir, tokenizer, model, ba
         torch.save(saving, os.path.join(save_dir, item + ".pt"))
 
 def process_chunk(dataset_path, items, save_dir, tokenizer, model, device_id, batch_size):
-    device = torch.device(f"cuda:{device_id + 2}" if torch.cuda.is_available() else "cpu")
+    device = torch.device(f"cuda:{device_id + 1}" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     model.eval()
     
@@ -92,9 +102,9 @@ def process_chunk(dataset_path, items, save_dir, tokenizer, model, device_id, ba
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_dir", type=str, default="datasets")
-    parser.add_argument("--dataset", type=str, default="swe-bench-lite")
+    parser.add_argument("--dataset", type=str, default="loc-bench")
     parser.add_argument("--save_dir", type=str, default="test_index")
-    parser.add_argument("--num_processes", type=int, default=2)
+    parser.add_argument("--num_processes", type=int, default=3)
     parser.add_argument("--model_path", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--batch_size", type=int, default=32)
     args = parser.parse_args()
@@ -104,7 +114,6 @@ def main():
     existing_set = set(get_filenames_in_dir(args.save_dir))
     test_items = [f for f in test_items if f not in existing_set]
 
-    
     num_gpus = torch.cuda.device_count()
     num_processes = min(args.num_processes, num_gpus, len(test_items))
     os.makedirs(args.save_dir, exist_ok=True)
