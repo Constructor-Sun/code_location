@@ -1,38 +1,36 @@
-import os
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-import torch
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-tokenizer = AutoTokenizer.from_pretrained('Salesforce/SweRankEmbed-Small', trust_remote_code=True)
-model = AutoModel.from_pretrained('Salesforce/SweRankEmbed-Small', trust_remote_code=True, add_pooling_layer=False)
-model.eval()
+model_name = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
 
-query_prefix = 'Represent this query for searching relevant code: '
-queries  = ['Calculate the n-th factorial']
-queries_with_prefix = ["{}{}".format(query_prefix, i) for i in queries]
-query_tokens = tokenizer(queries_with_prefix, padding=True, truncation=True, return_tensors='pt', max_length=512)
+# load the tokenizer and the model
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    torch_dtype="auto",
+    device_map="cuda:0"
+)
+model.to("cuda:0")
 
-documents = ['def fact(n):\n if n < 0:\n  raise ValueError\n return 1 if n == 0 else n * fact(n - 1)',
-             '"def fact(n):\n if n <= 0:\n return 0\n elif n == 1:\n return 1\n else:\n a, b = 0, 1\n for _ in range(2, n + 1):\n a, b = b, a + b\n return b\n\n']
-document_tokens =  tokenizer(documents, padding=True, truncation=True, return_tensors='pt', max_length=512)
+# prepare the model input
+prompt = "Write a quick sort algorithm."
+messages = [
+    {"role": "user", "content": prompt}
+]
+text = tokenizer.apply_chat_template(
+    messages,
+    tokenize=False,
+    add_generation_prompt=True,
+)
+print("model.device: ", model.device)
+model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
 
-# Compute token embeddings
-with torch.no_grad():
-    query_embeddings = model(**query_tokens)[0][:, 0]
-    document_embeddings = model(**document_tokens)[0][:, 0]
-    # query_embeddings = model(**query_tokens).last_hidden_state.sum(dim=1)
-    # document_embeddings = model(**document_tokens).last_hidden_state.sum(dim=1)
+# conduct text completion
+generated_ids = model.generate(
+    **model_inputs,
+    max_new_tokens=65536
+)
+output_ids = generated_ids[0][len(model_inputs.input_ids[0]):].tolist() 
 
+content = tokenizer.decode(output_ids, skip_special_tokens=True)
 
-# normalize embeddings
-query_embeddings = torch.nn.functional.normalize(query_embeddings, p=2, dim=1)
-document_embeddings = torch.nn.functional.normalize(document_embeddings, p=2, dim=1)
-
-scores = torch.mm(query_embeddings, document_embeddings.transpose(0, 1))
-for query, query_scores in zip(queries, scores):
-    doc_score_pairs = list(zip(documents, query_scores))
-    doc_score_pairs = sorted(doc_score_pairs, key=lambda x: x[1], reverse=True)
-    #Output passages & scores
-    print("Query:", query)
-    for document, score in doc_score_pairs:
-        print(score, document)
+print("content:", content)

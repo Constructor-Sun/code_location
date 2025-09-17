@@ -12,6 +12,8 @@ saved_models/
 Salesforce/
 test_index/
 datasets/
+swe-bench-lite/
+tmp/
 
 # do not include data files
 *.log
@@ -23,3 +25,5 @@ logs/
 *.pickle.*
 *.zip
 *.zip.*
+*.gv
+*.gv.*
