@@ -1,9 +1,7 @@
 import os
 import json
 import subprocess
-import code2flow
-import code2flow.python
-from code2flow.python import get_call_from_func_element
+import difflib
 from typing import Dict, List, Union
 from pydantic import BaseModel, Field
 # _original_get_call_from_func_element = code2flow.python.get_call_from_func_element
@@ -40,29 +38,23 @@ class GetFileInput(BaseModel):
             Should not include specific function name.
         """,
         examples=[
-            '{"file_path": "sklearn/pipeline.py"}', '{"file_path": "build_tools/github/vendor.py"}'
+            '{"file_path": "build_tools/github/vendor.py"}'
+            ]
+    )
+
+class ListFunctionDirectoryInput(BaseModel):
+    file_or_module_path: str = Field(
+        ...,
+        description="""
+            List all function names in this file or module. 
+            This will match all paths whose start with this file or module path.
+        """,
+        examples=[
+            '{"file_or_module_path": "sklearn/pipeline.py"}', '{"file_or_module_path": "build_tools/github/Classifier"}'
             ]
     )
 
 class GetCallGraphInput(BaseModel):
-    # scopes: List[str] = Field(
-    #     ...,
-    #     description="""
-    #         List of scope directories or files to analyze for the call graph.
-    #         When a folder is specified, only the Python files within that folder will be analyzed, without involving any subfolders.
-    #         E.g,, sklearn -> sklearn/*.py
-    #         Though supporting multiple scopes, it's better to specify only one directory to avoid potential errors.
-    #     """,
-    #     examples=[["sklearn/", "sklearn/utils/_mask.py"]]
-    # )
-    # target_function: str = Field(
-    #     ...,
-    #     description="""
-    #         The target function name to generate the call graph for.
-    #         Must be in the form: function_name or class_name.function_name.
-    #     """,
-    #     examples=["get_parser", "User.create"]
-    # )
     params: str = Field(
         ...,
         description="""
@@ -74,6 +66,7 @@ class GetCallGraphInput(BaseModel):
             target_function: str
                 The target function name to generate the call graph for.
                 Must be in the form: function_name or class_name.function_name.
+                DO NOT input class_name only
         """,
         examples=[
             '{"scopes": ["sklearn/", "sklearn/utils/"], "target_function": "get_parser"}',
@@ -98,7 +91,6 @@ def get_corpus(test_dir: str, dataset: str, instance_id: str) -> Dict[str, str]:
                 corpus_dict[_id] = text
     return corpus_dict
 
-
 def get_functions(corpus_dict: Dict[str, str], func_paths: str) -> List[str]:
     try:
         # Parse the JSON string, expecting an object with 'func_paths' key
@@ -119,7 +111,12 @@ def get_functions(corpus_dict: Dict[str, str], func_paths: str) -> List[str]:
         if path in corpus_dict:
             result.append(corpus_dict[path])
         else:
-            result.append(f"{path} not found! Ensure the path points to a specific function, e.g., 'sklearn/base.py/DensityMixin/score'.")
+            similar_paths = difflib.get_close_matches(path, corpus_dict.keys(), n=3, cutoff=0.6)
+            if similar_paths:
+                suggestions = " or ".join(f"'{p}'" for p in similar_paths)
+                result.append(f"{path} not found! Do you mean {suggestions}? Ensure the path points to a specific function, e.g., 'sklearn/base.py/DensityMixin/score'.")
+            else:
+                result.append(f"{path} not found! Ensure the path points to a specific function, e.g., 'sklearn/base.py/DensityMixin/score'.")
     return result
 
 def get_file(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
@@ -140,7 +137,25 @@ def get_file(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
         result.append(f"No functions found for file path '{path}'. Please check if the file path exists in the corpus.")
     return result
 
-def transform_json(call_graph):
+# Warning: this should not be used since it lists too many names and confuse the agent
+def list_function_directory(corpus_dict: Dict[str, str], file_or_module_path: str) -> List[str]:
+    try:
+        input_data = json.loads(file_or_module_path)
+        if not isinstance(input_data, dict) or "file_or_module_path" not in input_data:
+            return "Input must be a valid JSON sting with a 'file_or_module_path' key"
+        path = input_data["file_or_module_path"]
+        if not isinstance(path, str):
+            return "'file_or_module_path' value must be a string."
+    except json.JSONDecodeError as _:
+        return "JSON failed to load. Please check the format."
+
+    result = [func_path for func_path in corpus_dict.keys()
+              if func_path.startswith(path)]
+    if not result:
+        result.append(f"No functions found for file path '{path}'.")
+    return result
+
+def transform_graph(call_graph):
     graph_data = call_graph["graph"]
     
     # node uid -> name
@@ -166,20 +181,102 @@ def transform_json(call_graph):
     
     return result
 
-def get_call_graph(instance_path: str, scopes: List[str], target_function: str) -> Dict[str, str]:
+# def _get_call_graph(instance_path: str, scopes: List[str], target_function: str) -> Dict[str, str]:
+#     targets = [os.path.join(instance_path, scope) for scope in scopes]
+#     modified_targets = []
+#     for target in targets:
+#         if target.endswith('.py'):
+#             if '/' in target:
+#                 dir_part = target.rsplit('/', 1)[0]
+#                 modified_targets.append(f"{dir_part}/*.py")
+#             else:
+#                 modified_targets.append("*.py")
+#         else:
+#             target = target if target.endswith('/') else target + '/'
+#             modified_targets.append(target + '*.py')
+#     modified_targets = " ".join(modified_targets)
+#     code2flow_cmd = f"code2flow {modified_targets} --target-function {target_function} --upstream-depth=1 --downstream-depth=5 --output tmp/call_graph.json"
+#     print("code2flow_cmd: ", code2flow_cmd)
+
+#     try:
+#         # TODO: sometimes it cannot find the existing node, strange
+#         _ = subprocess.run(
+#             code2flow_cmd,
+#             shell=True,
+#             capture_output=True,
+#             text=True,
+#             check=True
+#         )
+#         with open("tmp/call_graph.json", "r") as file:
+#             call_graph = json.load(file)
+#             simple_call_graph = transform_graph(call_graph)
+#             with open('tmp/transformed_call_graph.json', 'w', encoding='utf-8') as f:
+#                 json.dump(simple_call_graph, f, indent=2, ensure_ascii=False)
+#             return simple_call_graph
+#     except subprocess.CalledProcessError as e:
+#         # print(f"Error running code2flow: {e}")
+#         # print(f"stderr: {e.stderr}")
+#         # TODO: fix it using: 1. use list_function_directory; 2. do not limit target_function
+#         try:
+#             fixed_cmd = f"code2flow {modified_targets} --output tmp/call_graph.json"
+#             _ = subprocess.run(
+#                 fixed_cmd,
+#                 shell=True,
+#                 capture_output=True,
+#                 text=True,
+#                 check=True
+#             )
+#             with open("tmp/call_graph.json", "r") as file:
+#                 call_graph = json.load(file)
+#                 simple_call_graph = transform_graph(call_graph)
+#                 with open('tmp/transformed_call_graph.json', 'w', encoding='utf-8') as f:
+#                     json.dump(simple_call_graph, f, indent=2, ensure_ascii=False)
+#                 return f"""Cannot find {target_function} in {modified_targets}.
+#                             Instead, this tool reveal all call graphs in target_function:
+#                             """ + str(simple_call_graph)
+#         except subprocess.CalledProcessError as e2:
+#             # print(f"Error running code2flow: {e}")
+#             # print(f"stderr: {e.stderr}")
+#             return "Failed to geneate call graph. Please check if file or function exists."
+#     except FileNotFoundError as e:
+#         raise RuntimeError(
+#             "code2flow not found. Please install with: pip install code2flow"
+#             ) from e
+    
+# def get_call_graph(instance_path: str, params: str) -> Dict[str, str]:
+#     try:
+#         params_dict = json.loads(params)
+#         return _get_call_graph(
+#             instance_path,
+#             params_dict['scopes'],
+#             params_dict['target_function']
+#         )
+#     except json.JSONDecodeError:
+#         return "Error: Invalid JSON format. Please provide valid JSON string."
+#     except KeyError as e:
+#         return f"Error: Missing required parameter: {e}"
+#     except Exception as e:
+#         return f"Error: {str(e)}"
+    
+def _get_call_graph(instance_path: str, scopes: List[str], target_function: str) -> Dict[str, str]:
     targets = [os.path.join(instance_path, scope) for scope in scopes]
     modified_targets = []
     for target in targets:
         if target.endswith('.py'):
-            modified_targets.append(target.rsplit('/', 1) + '/*.py')
+            if '/' in target:
+                dir_part = target.rsplit('/', 1)[0]
+                modified_targets.append(f"{dir_part}/*.py")
+            else:
+                modified_targets.append("*.py")
         else:
             target = target if target.endswith('/') else target + '/'
             modified_targets.append(target + '*.py')
     modified_targets = " ".join(modified_targets)
-    
     code2flow_cmd = f"code2flow {modified_targets} --target-function {target_function} --upstream-depth=1 --downstream-depth=5 --output tmp/call_graph.json"
-    
+    print("code2flow_cmd: ", code2flow_cmd)
+
     try:
+        # TODO: sometimes it cannot find the existing node, strange
         _ = subprocess.run(
             code2flow_cmd,
             shell=True,
@@ -189,26 +286,44 @@ def get_call_graph(instance_path: str, scopes: List[str], target_function: str) 
         )
         with open("tmp/call_graph.json", "r") as file:
             call_graph = json.load(file)
-            simple_call_graph = transform_json(call_graph)
+            simple_call_graph = transform_graph(call_graph)
             with open('tmp/transformed_call_graph.json', 'w', encoding='utf-8') as f:
                 json.dump(simple_call_graph, f, indent=2, ensure_ascii=False)
             return simple_call_graph
-        
     except subprocess.CalledProcessError as e:
-        print(f"Error running code2flow: {e}")
-        print(f"stderr: {e.stderr}")
-        return """
-            Failed to geneate call graph. Please check if file or function exists.
-            """
+        # print(f"Error running code2flow: {e}")
+        # print(f"stderr: {e.stderr}")
+        # TODO: fix it using: 1. use list_function_directory; 2. do not limit target_function
+        try:
+            fixed_cmd = f"code2flow {modified_targets} --output tmp/call_graph.json"
+            _ = subprocess.run(
+                fixed_cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            with open("tmp/call_graph.json", "r") as file:
+                call_graph = json.load(file)
+                simple_call_graph = transform_graph(call_graph)
+                with open('tmp/transformed_call_graph.json', 'w', encoding='utf-8') as f:
+                    json.dump(simple_call_graph, f, indent=2, ensure_ascii=False)
+                return f"""Cannot find {target_function} in {modified_targets}.
+                            Instead, this tool reveal all call graphs in target_function:
+                            """ + str(simple_call_graph)
+        except subprocess.CalledProcessError as e2:
+            # print(f"Error running code2flow: {e}")
+            # print(f"stderr: {e.stderr}")
+            return "Failed to geneate call graph. Please check if file or function exists."
     except FileNotFoundError as e:
         raise RuntimeError(
             "code2flow not found. Please install with: pip install code2flow"
             ) from e
     
-def get_call_graph_json(instance_path: str, params: str) -> Dict[str, str]:
+def get_call_graph(instance_path: str, params: str) -> Dict[str, str]:
     try:
         params_dict = json.loads(params)
-        return get_call_graph(
+        return _get_call_graph(
             instance_path,
             params_dict['scopes'],
             params_dict['target_function']
@@ -238,10 +353,9 @@ def main():
         funcs = get_file(corpus, file_path)
         print("funcs: ", len(funcs))
     if test_call_graph:
-        instance_path = os.path.join("swe-bench-lite", "scikit-learn__scikit-learn-25500")
-        scopes = ["sklearn/*.py"]
-        target_function = "IsotonicRegression.fit"
-        result = get_call_graph(instance_path, scopes, target_function)
+        instance_path = os.path.join("swe-bench-lite", "scikit-learn__scikit-learn-14983")
+        params = '{"scopes": ["sklearn/model_selection/_split.py"], "target_function": "_RepeatedSplits"}'
+        result = get_call_graph(instance_path, params)
         print("result: ", result)
 
 if __name__ == "__main__":

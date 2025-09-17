@@ -1,5 +1,6 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import json
 import argparse
 import torch.distributed as dist
@@ -21,37 +22,15 @@ from tools import (
     get_corpus, 
     get_functions, 
     get_file, 
-    get_call_graph_json,
+    list_function_directory,
+    get_call_graph,
     GetFunctionsInput,
     GetFileInput,
+    ListFunctionDirectoryInput,
     GetCallGraphInput
 )
 
 def load_inference_model(model_name, device="cuda:1"):
-    # tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    # model = AutoModelForCausalLM.from_pretrained(
-    #     model_name,
-    #     trust_remote_code=True,
-    #     torch_dtype="auto",
-    #     device_map=device
-    # )
-
-    # hf_pipeline = pipeline(
-    #     "text-generation",
-    #     model=model,
-    #     tokenizer=tokenizer,
-    #     max_new_tokens=2048,
-    #     temperature=0.7,
-    #     top_p=0.8,
-    #     top_k=20,
-    #     do_sample=True,
-    #     repetition_penalty=1.05,
-    #     return_full_text=False
-    # )
-    
-    # inference_model = HuggingFacePipeline(pipeline=hf_pipeline)
-    # return inference_model
-
     llm = VLLM(
         model=model_name,
         max_new_tokens=65536,
@@ -70,7 +49,7 @@ def load_inference_model(model_name, device="cuda:1"):
 
 def create_agent(llm, tools):
     prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=SYSTEMP_PROMPT),
+        SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content="{input}"),
     ])
     memory = ConversationBufferMemory(return_messages=True, memory_key="chat_history")
@@ -86,7 +65,7 @@ def create_agent(llm, tools):
         agent=agent,
         tools=tools,
         memory=memory,
-        max_iterations=20,
+        max_iterations=70,
         verbose=True,
         handle_parsing_errors=True
     )
@@ -127,7 +106,7 @@ def main():
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--inference_model", type=str, default="Qwen/Qwen3-Coder-30B-A3B-Instruct")
     parser.add_argument("--top_k", type=int, default=10)
-    parser.add_argument("--target", type=str, default="scikit-learn__scikit-learn-25500")
+    parser.add_argument("--target", type=str, default="django__django-11001")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
 
@@ -167,7 +146,7 @@ def main():
             handle_tool_error=True,
         ),
         StructuredTool.from_function(
-            func=partial(get_call_graph_json, os.path.join(args.dataset, args.target)),
+            func=partial(get_call_graph, os.path.join(args.dataset, args.target)),
             name="get_call_graph_json",
             description="Generate a call graph for a target function using code2flow. Analyzes function dependencies within specified scopes.",
             args_schema=GetCallGraphInput,

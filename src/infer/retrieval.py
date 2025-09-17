@@ -1,4 +1,5 @@
 import os
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 import gc
 import json
 import argparse
@@ -106,7 +107,7 @@ def main():
     parser.add_argument("--dataset", type=str, default="swe-bench-lite") # swe-bench-lite
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--top_k", type=int, default=10)
-    parser.add_argument("--target", type=str, default="scikit-learn__scikit-learn-25500")
+    parser.add_argument("--target", type=str, default="django__django-11001")
     args = parser.parse_args()
 
     args.target = args.dataset + '-function_' + args.target
