@@ -21,8 +21,9 @@ class GetFunctionsInput(BaseModel):
     func_paths: str = Field(
         ...,
         description="""
-            List of function paths to retrieve from the corpus dictionary.
-            Can be a list of function paths. Elements in this list should NOT just end with files or directories.
+            Provide as a JSON string containing a list of function paths. The key is "func_paths".
+            Paths should reference specific functions/methods, NOT just files or directories.
+            This will return targeted function contents.
         """,
         examples=[
             '{"func_paths": ["sklearn/base.py/DensityMixin/score", "build_tools/github/vendor.py/main"]}'
@@ -33,9 +34,9 @@ class GetFileInput(BaseModel):
     file_path: str = Field(
         ...,
         description="""
-            Get all functions in this file. 
-            This will match all functions whose paths start with this file path.
+            Provide as a JSON string containing a valid file path. The key is "file_path".
             Should not include specific function name.
+            This will return all functions within this file.
         """,
         examples=[
             '{"file_path": "build_tools/github/vendor.py"}'
@@ -46,33 +47,57 @@ class ListFunctionDirectoryInput(BaseModel):
     file_or_module_path: str = Field(
         ...,
         description="""
-            List all function names in this file or module. 
-            This will match all paths whose start with this file or module path.
+            Provide as a JSON string containing a valid file path. The key is "file_or_module_path".
+            "file_or_module_path" should be a path for a specific .py file.
+            This will match all functions with this file.
         """,
         examples=[
             '{"file_or_module_path": "sklearn/pipeline.py"}', '{"file_or_module_path": "build_tools/github/Classifier"}'
             ]
     )
 
+# class GetCallGraphInput(BaseModel):
+#     params: str = Field(
+#         ...,
+#         description="""
+#             JSON string with parameters: {'scopes': [], 'target_function': ''}.
+#             Scopes: List[str]
+#                 List of scope directories to analyze for the call graph.
+#                 Only accept directory path. DO NOT enter py file name.
+#                 Must be in the form: directory_path
+#             target_function: str
+#                 The target function name to generate the call graph for.
+#                 Must be in the form: function_name or class_name.function_name.
+#                 DO NOT input class_name only
+#         """,
+#         examples=[
+#             '{"scopes": ["sklearn/", "sklearn/utils/"], "target_function": "get_parser"}',
+#             '{"scopes": ["models/", "controllers/"], "target_function": "User.create"}',
+#         ]
+#     )
+
 class GetCallGraphInput(BaseModel):
     params: str = Field(
         ...,
         description="""
-            JSON string with parameters: {'scopes': [], 'target_function': ''}.
-            Scopes: List[str]
-                List of scope directories to analyze for the call graph.
-                Only accept directory path. DO NOT enter py file name.
-                Must be in the form: directory_path
-            target_function: str
-                The target function name to generate the call graph for.
-                Must be in the form: function_name or class_name.function_name.
-                DO NOT input class_name only
+            Provide as a JSON string containing a valid file path. The key is "target_function".
+            "target_function" should be a path for a specific function.
+            This will return a call graph of target function within its directory.
         """,
         examples=[
-            '{"scopes": ["sklearn/", "sklearn/utils/"], "target_function": "get_parser"}',
-            '{"scopes": ["models/", "controllers/"], "target_function": "User.create"}',
+            '{"target_function": "examples/intermediate/coupled_cluster.py/get_CC_operators"}', 
+            '{"target_function": "src/_pytest/cacheprovider.py/cache"}'
         ]
     )
+
+def find_similar_path(corpus_dict: Dict[str, str], path: str) -> str:
+    similar_paths = difflib.get_close_matches(path, corpus_dict.keys(), n=3, cutoff=0.7)
+    if similar_paths:
+        similar_paths_str = " or ".join(f"'{p}'" for p in similar_paths)
+        suggestions = f"{path} not found! Do you mean {similar_paths_str}? Ensure the path points to a specific function."
+    else:
+        suggestions = f"{path} not found! Ensure the path points to a specific function, e.g., 'dir/file.py/Module/function'."
+    return suggestions
 
 def get_corpus(test_dir: str, dataset: str, instance_id: str) -> Dict[str, str]:
     if '-function_' in instance_id:
@@ -94,6 +119,7 @@ def get_corpus(test_dir: str, dataset: str, instance_id: str) -> Dict[str, str]:
 def get_functions(corpus_dict: Dict[str, str], func_paths: str) -> List[str]:
     try:
         # Parse the JSON string, expecting an object with 'func_paths' key
+        print("func_paths: ", func_paths)
         input_data = json.loads(func_paths)
         if not isinstance(input_data, dict) or "func_paths" not in input_data:
             return "Input must be a valid JSON sting with a 'func_paths' key"
@@ -111,12 +137,8 @@ def get_functions(corpus_dict: Dict[str, str], func_paths: str) -> List[str]:
         if path in corpus_dict:
             result.append(corpus_dict[path])
         else:
-            similar_paths = difflib.get_close_matches(path, corpus_dict.keys(), n=3, cutoff=0.6)
-            if similar_paths:
-                suggestions = " or ".join(f"'{p}'" for p in similar_paths)
-                result.append(f"{path} not found! Do you mean {suggestions}? Ensure the path points to a specific function, e.g., 'sklearn/base.py/DensityMixin/score'.")
-            else:
-                result.append(f"{path} not found! Ensure the path points to a specific function, e.g., 'sklearn/base.py/DensityMixin/score'.")
+            suggestions = find_similar_path(corpus_dict, path)
+            result.append(suggestions)
     return result
 
 def get_file(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
@@ -258,75 +280,101 @@ def transform_graph(call_graph):
 #     except Exception as e:
 #         return f"Error: {str(e)}"
     
-def _get_call_graph(instance_path: str, scopes: List[str], target_function: str) -> Dict[str, str]:
-    targets = [os.path.join(instance_path, scope) for scope in scopes]
-    modified_targets = []
-    for target in targets:
-        if target.endswith('.py'):
-            if '/' in target:
-                dir_part = target.rsplit('/', 1)[0]
-                modified_targets.append(f"{dir_part}/*.py")
-            else:
-                modified_targets.append("*.py")
+def _get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_function: str) -> str:
+    def _check_valid(path):
+        if path in corpus_dist:
+            return ""
         else:
-            target = target if target.endswith('/') else target + '/'
-            modified_targets.append(target + '*.py')
-    modified_targets = " ".join(modified_targets)
-    code2flow_cmd = f"code2flow {modified_targets} --target-function {target_function} --upstream-depth=1 --downstream-depth=5 --output tmp/call_graph.json"
-    print("code2flow_cmd: ", code2flow_cmd)
+            return find_similar_path(corpus_dist, path)
 
-    try:
-        # TODO: sometimes it cannot find the existing node, strange
-        _ = subprocess.run(
-            code2flow_cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            check=True
-        )
+    def _split_path(path):
+        # find file first. Always assume there is a .py file in the path.
+        py_index = path.find('.py')
+        if py_index == -1:
+            return path, ""
+        
+        # dir + file
+        first_part = path[:py_index + 3]  # include ".py"
+        
+        # (module) + function
+        second_part = path[py_index + 3:]
+        if second_part.startswith('/'):
+            second_part = second_part[1:]
+
+        # code2flow requires '.' to connect module and function
+        second_part = second_part.replace('/', '.')
+        return first_part, second_part
+    
+    def _load_json_call_graph():
         with open("tmp/call_graph.json", "r") as file:
             call_graph = json.load(file)
             simple_call_graph = transform_graph(call_graph)
             with open('tmp/transformed_call_graph.json', 'w', encoding='utf-8') as f:
                 json.dump(simple_call_graph, f, indent=2, ensure_ascii=False)
             return simple_call_graph
-    except subprocess.CalledProcessError as e:
-        # print(f"Error running code2flow: {e}")
-        # print(f"stderr: {e.stderr}")
-        # TODO: fix it using: 1. use list_function_directory; 2. do not limit target_function
-        try:
-            fixed_cmd = f"code2flow {modified_targets} --output tmp/call_graph.json"
-            _ = subprocess.run(
-                fixed_cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            with open("tmp/call_graph.json", "r") as file:
-                call_graph = json.load(file)
-                simple_call_graph = transform_graph(call_graph)
-                with open('tmp/transformed_call_graph.json', 'w', encoding='utf-8') as f:
-                    json.dump(simple_call_graph, f, indent=2, ensure_ascii=False)
-                return f"""Cannot find {target_function} in {modified_targets}.
-                            Instead, this tool reveal all call graphs in target_function:
-                            """ + str(simple_call_graph)
-        except subprocess.CalledProcessError as e2:
-            # print(f"Error running code2flow: {e}")
-            # print(f"stderr: {e.stderr}")
-            return "Failed to geneate call graph. Please check if file or function exists."
-    except FileNotFoundError as e:
-        raise RuntimeError(
-            "code2flow not found. Please install with: pip install code2flow"
-            ) from e
+
+    # TODO: here we suppose target function is a function path.
+    # TODO: we need to split it into scope and target-function
+    # TODO: meanwhile we need to handle multiple errors.
+    suggestions = _check_valid(target_function)
+    if suggestions != "":
+        return suggestions
+    else:
+        dir_file, module_function = _split_path(target_function)
+        scope = os.path.join(instance_path, dir_file)
+        scope_dir = os.path.dirname(scope)
+
+        scope_strategies = [
+            scope_dir,
+            os.path.join(scope_dir, "*.py"),
+            scope
+        ]
+        scope_strategies = list(dict.fromkeys([s for s in scope_strategies if s]))
+
+        for i, scope in enumerate(scope_strategies):
+            try:
+                code2flow_cmd = f"code2flow {scope} --target-function {module_function} --upstream-depth=1 --downstream-depth=5 --output tmp/call_graph.json"
+                _ = subprocess.run(
+                    code2flow_cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                simple_call_graph = _load_json_call_graph()
+                edge_count = len(simple_call_graph['edges'])
+                if edge_count <= 75 and i < len(scope_strategies) - 1:
+                    return f"Call graph of {module_function} in the scope {scope} is: \n" + str(simple_call_graph)
+                else:
+                    continue
+            except subprocess.CalledProcessError as e:
+                print(f"Finding {module_function} in {scope} has runtime error: {type(e)}")
+                continue
+            except subprocess.TimeoutExpired:
+                print(f"Finding {module_function} in {scope} cost too much time. This is not expected.")
+                continue
+            except FileNotFoundError as e:
+                raise RuntimeError(
+                    "code2flow not found. Please install with: pip install code2flow"
+                    ) from e
+            except Exception as e:
+                # raise RuntimeError(
+                #     f"Finding {module_function} in {scope} has unexpected errors: {e}. Please check the tool."
+                #     ) from e
+                print(f"Finding {module_function} in {scope} has unexpected errors: {e}. Please check the tool.")
+                continue
+    return f"""
+        get_call_graph cannot analyze this function due to its inner flaws. This tool then use 'get_functions' to reveal the content of {target_function}
+    """ + str(get_functions(corpus_dist, '{"func_paths": ["' + target_function + '"]}'))
     
-def get_call_graph(instance_path: str, params: str) -> Dict[str, str]:
+def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_function: str) -> str:
     try:
-        params_dict = json.loads(params)
+        print("target_function: ", target_function)
+        target = json.loads(target_function)["target_function"]
         return _get_call_graph(
+            corpus_dist,
             instance_path,
-            params_dict['scopes'],
-            params_dict['target_function']
+            target
         )
     except json.JSONDecodeError:
         return "Error: Invalid JSON format. Please provide valid JSON string."
@@ -336,26 +384,24 @@ def get_call_graph(instance_path: str, params: str) -> Dict[str, str]:
         return f"Error: {str(e)}"
 
 def main():
-    corpus = get_corpus("datasets", "swe-bench-lite", "scikit-learn__scikit-learn-25500")
+    dataset = "swe-bench-lite"
+    instance_id = "sympy__sympy-21612"
+    corpus = get_corpus("datasets", dataset, instance_id)
     test_funcs = False
     test_file = False
     test_call_graph = True
     if test_funcs:
-        example_func_path = [
-            "build_tools/generate_authors_table.py/get",
-            "build_tools/generate_authors_table.py/key",
-            "scikit-learn/setup.py/CleanCommand/run"
-        ]
+        example_func_path = '{"func_paths": ["sklearn/model_selection/_split.py/_BaseKFold/__init__"]}'
         funcs = get_functions(corpus, example_func_path)
         print("funcs: ", funcs)
     if test_file:
-        file_path = "build_tools/generate_authors_table.py"
+        file_path = '{"file_path": "sympy/parsing/latex/__init__.py"}'
         funcs = get_file(corpus, file_path)
         print("funcs: ", len(funcs))
     if test_call_graph:
-        instance_path = os.path.join("swe-bench-lite", "scikit-learn__scikit-learn-14983")
-        params = '{"scopes": ["sklearn/model_selection/_split.py"], "target_function": "_RepeatedSplits"}'
-        result = get_call_graph(instance_path, params)
+        instance_path = os.path.join(dataset, instance_id)
+        params = '{"target_function": "sympy/parsing/latex/__init__.py/parse_latex"}'
+        result = get_call_graph(corpus, instance_path, params)
         print("result: ", result)
 
 if __name__ == "__main__":

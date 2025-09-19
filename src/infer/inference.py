@@ -65,7 +65,7 @@ def create_agent(llm, tools):
         agent=agent,
         tools=tools,
         memory=memory,
-        max_iterations=70,
+        max_iterations=None,
         verbose=True,
         handle_parsing_errors=True
     )
@@ -106,7 +106,7 @@ def main():
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--inference_model", type=str, default="Qwen/Qwen3-Coder-30B-A3B-Instruct")
     parser.add_argument("--top_k", type=int, default=10)
-    parser.add_argument("--target", type=str, default="django__django-11001")
+    parser.add_argument("--target", type=str, default="scikit-learn__scikit-learn-25500")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
 
@@ -115,9 +115,6 @@ def main():
     print("preds: ", preds)
 
     corpus = get_corpus(args.test_dir, args.dataset, args.target)
-    # funcs=["sklearn/calibration.py/CalibratedClassifierCV/predict_proba", "sklearn/calibration.py/IsotonicRegression/predict", "sklearn/_config.py/set_config"]
-    # print("sklearn/calibration.py/CalibratedClassifierCV/predict_proba: ", get_functions(corpus, funcs))
-    # exit()
     inference_model = load_inference_model(args.inference_model)
     # prompt = create_prompt_template()
     # chain = prompt | inference_model | StrOutputParser()
@@ -145,9 +142,17 @@ def main():
             return_direct=False,
             handle_tool_error=True,
         ),
+        # StructuredTool.from_function(
+        #     func=partial(list_function_directory, corpus),
+        #     name="list_function_directory",
+        #     description="Reveal all function names within this file.",
+        #     args_schema=ListFunctionDirectoryInput,
+        #     return_direct=False,
+        #     handle_tool_error=True,
+        # ),
         StructuredTool.from_function(
-            func=partial(get_call_graph, os.path.join(args.dataset, args.target)),
-            name="get_call_graph_json",
+            func=partial(get_call_graph, corpus, os.path.join(args.dataset, args.target)),
+            name="get_call_graph",
             description="Generate a call graph for a target function using code2flow. Analyzes function dependencies within specified scopes.",
             args_schema=GetCallGraphInput,
             return_direct=False,

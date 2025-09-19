@@ -28,51 +28,58 @@ Your goal is to iteratively evaluate and refine a list of candidate code locatio
 3. **Final Conclusion**: only after you have identified sufficiently fundamental causes.
 
 **List Management Rule:**
-- Keep the `preds` list focused to ~10 items. 
+- Keep the `preds` list focused to 10 items. 
 - When you discover a new, more relevant candidate, **ADD it** and simultaneously **REMOVE the current LEAST likely candidate**. 
 - Always **RE-RANK** the list by likelihood.
 
 **Tool calls hint**:
-- You are STRONGLY encouraged to use "get_call_graph" to guide your searching. Remember: "scopes" should be a directory, "target_function" should be a function. Format: {{"scopes": [], "target_function": ''}}
-- You can use "get_functions" to get candidate codes, but don't check too many functions at the same time. Format: {{"func_paths": []}}
-- You are NOT encouraged to use "get_file", as a file can be very large. Use only when necessary. Format: {{"file_path": ''}}
+- You are STRONGLY encouraged to use "get_call_graph" to guide your searching. Remember: "target_function" should be a function path. Format: '{{"target_function": ''}}'
+- You can use "get_functions" to get candidate codes, but don't check too many functions at the same time. Format: '{{"func_paths": []}}'
+- You are NOT encouraged to use "get_file", as a file can be very large. Use only when necessary. Format: '{{"file_or_module_path": ''}}'
 
 **Initial Assessment & Final Conclusion Format**
-- **When:** (a) For the **initial assessment** before any tool calls. (b) After a tool call if you need to give an intermediate summary. (c) When you are ready to **give the final answer**.
+- **When:** (a) For the **initial assessment** before any tool calls. (b) When you are ready to **give the final answer**.
 {{
-    "reasoning_for_updates": "A concise explanation of changes (e.g., 'Based on names, prioritized network-related files. After reading cache.c, found a function much more fundamental to the issue. Added cache_validate and removed the least relevant candidate, log_formatter.c.')",
+    "reasoning_for_updates": "A detailed explanation of changes (e.g., 'Based on names, prioritized issue-related files. After reading cache.c, found a function much more fundamental to the issue. Added cache_validate and removed the least relevant candidate, log_formatter.c.')",
     "updated_preds": ["list", "of", "candidates", "sorted", "by", "likelihood"],
-    "next_step": "final_answer" | "continue_investigation"
+    "next_step": "continue_investigation" | "final_answer"
 }}
 
 **Begin now with your INITIAL ASSESSMENT.**
 """
 
-
 # FIRST_PROMPT = """
-#     Please evaluate which candidates from the provided list are likely to be the root cause code, based SOLELY on the following GitHub issue description and the candidate list of potential root cause function names.
+# Your goal is to iteratively evaluate and refine a list of candidate code locations (`preds`) to identify the most likely root cause for a GitHub issue.
 
-#     **Issue Description:**
-#     {query}
+# **Initial Input:**
+# - Issue Description: {query}
+# - Initial Candidate List (preds): {preds}
 
-#     **Candidate List:**
-#     {preds}
+# **Your Investigation Process:**
+# 1.  **Initial Assessment**: analyze the `preds` list based SOLELY on the issue description and the candidates' paths/names.
+# 2.  **Investigation Loop**:
+#     a. **Plan & Call Tools:** Decide which candidate(s) to investigate next by calling tools to reveal its structure or content.
+#     b. **Analyze Evidence:** Based on tool results, update your understanding.
+#     c. **Iterate or Conclude:** If you believe candidates sufficiently fundamental, end the loop. If not, continue the investigation by calling the next tool.
+# 3. **Final Conclusion**: End the loop when you have identified a function that directly contains the logic that would produce the error described in the issue.
 
-#     **Instructions:**
-#     1.  Briefly summarize the issue's core problem.
-#     2.  Analyze EACH candidate in the list. For each one, provide a concise reason based ONLY on its path and name for why it could or could not be related to the issue.
-#     3.  Finally, select the most likely candidate(s).
+# **List Management Rule:**
+# - Keep the `preds` list focused to 10 items. 
+# - When you discover a new, more relevant candidate, **ADD it** and simultaneously **REMOVE the current LEAST likely candidate**. 
+# - Always **RE-RANK** the list by likelihood.
 
-#     **Output Format Requirement:**
-#     Provide your answer in the following JSON format.
+# **Tool calls hint**:
+# - You are STRONGLY encouraged to use "get_call_graph" to guide your searching. Remember: "target_function" should be a function path. Format: '{{"target_function": ''}}'
+# - You can use "get_functions" to get candidate codes. It is recommended to request no more than 3-5 function bodies at a time to avoid overwhelming the context window. Format: '{{"func_paths": []}}'
+# - You are NOT encouraged to use "get_file", as a file can be very large. Use only when necessary. Format: '{{"file_or_module_path": ''}}'
 
-#     {{
-#     "issue_summary": "Brief summary of the issue",
-#     "candidate_analysis": {{
-#         "candidate_name_1": "Short reason for inclusion/exclusion based on path/name",
-#         "candidate_name_2": "Short reason for inclusion/exclusion based on path/name"
-#     }},
-#     "most_likely_root_causes": ["first_most_likely", "second_most_likely", "third_most_likely"],
-#     "explanation": "Brief overall explanation for the final choices, including why these 3 were selected and in this order"
-#     }}
+# **Initial Assessment & Final Conclusion Format**
+# - **When:** (a) For the **initial assessment** before any tool calls. (b) When you are ready to **give the final answer**.
+# {{
+#     "reasoning_for_updates": "A detailed explanation of changes (e.g., 'Based on names, prioritized issue-related files. After reading ModuleB.FunctionA, it is much more fundamental to the issue. Added ModuleB.FunctionA and removed the least relevant candidate')",
+#     "updated_preds": ["list", "of", "candidates", "sorted", "by", "likelihood"],
+#     "next_step": "continue_investigation" | "final_answer"
+# }}
+
+# **Begin now with your INITIAL ASSESSMENT.**
 # """
