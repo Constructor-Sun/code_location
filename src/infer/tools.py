@@ -26,7 +26,7 @@ class GetFunctionsInput(BaseModel):
             This will return targeted function contents.
         """,
         examples=[
-            '{"func_paths": ["sklearn/base.py/DensityMixin/score", "build_tools/github/vendor.py/main"]}'
+            '{"hypothesis": "...", "reasoning": "...", "func_paths": ["sklearn/base.py/DensityMixin/score", "build_tools/github/vendor.py/main"]}'
             ]
     )
 
@@ -39,20 +39,20 @@ class GetFileInput(BaseModel):
             This will return all functions within this file.
         """,
         examples=[
-            '{"file_path": "build_tools/github/vendor.py"}'
+            '{"hypothesis": "...", "reasoning": "...", "file_path": "build_tools/github/vendor.py"}'
             ]
     )
 
 class ListFunctionDirectoryInput(BaseModel):
-    file_or_module_path: str = Field(
+    file_path: str = Field(
         ...,
         description="""
-            Provide as a JSON string containing a valid file path. The key is "file_or_module_path".
-            "file_or_module_path" should be a path for a specific .py file.
-            This will match all functions with this file.
+            Provide as a JSON string containing a valid file path or directory. The key is "file_path".
+            "file_path" should be a path for a specific .py file.
+            This will match all functions with this file. But if too much functions here, it will only list modules' names.
         """,
         examples=[
-            '{"file_or_module_path": "sklearn/pipeline.py"}', '{"file_or_module_path": "build_tools/github/Classifier"}'
+            '{"hypothesis": "...", "reasoning": "...", "file_path": "sklearn/pipeline.py"}'
             ]
     )
 
@@ -85,10 +85,28 @@ class GetCallGraphInput(BaseModel):
             This will return a call graph of target function within its directory.
         """,
         examples=[
-            '{"target_function": "examples/intermediate/coupled_cluster.py/get_CC_operators"}', 
-            '{"target_function": "src/_pytest/cacheprovider.py/cache"}'
+            '{"hypothesis": "...", "reasoning": "...", "target_function": "examples/intermediate/coupled_cluster.py/get_CC_operators"}', 
+            '{"hypothesis": "...", "reasoning": "...", "target_function": "src/_pytest/cacheprovider.py/cache"}'
         ]
     )
+
+def _split_path(path):
+    # find file first. Always assume there is a .py file in the path.
+    py_index = path.find('.py')
+    if py_index == -1:
+        return path, ""
+    
+    # dir + file
+    first_part = path[:py_index + 3]  # include ".py"
+    
+    # (module) + function
+    second_part = path[py_index + 3:]
+    if second_part.startswith('/'):
+        second_part = second_part[1:]
+
+    # code2flow requires '.' to connect module and function
+    second_part = second_part.replace('/', '.')
+    return first_part, second_part
 
 def find_similar_path(corpus_dict: Dict[str, str], path: str) -> str:
     similar_paths = difflib.get_close_matches(path, corpus_dict.keys(), n=3, cutoff=0.7)
@@ -98,6 +116,22 @@ def find_similar_path(corpus_dict: Dict[str, str], path: str) -> str:
     else:
         suggestions = f"{path} not found! Ensure the path points to a specific function, e.g., 'dir/file.py/Module/function'."
     return suggestions
+
+def check_module(corpus_dict: Dict[str, str], path: str) -> List[str]:
+    dir_file, module_function = _split_path(path)
+    module = module_function.split(".")[0]
+    if module == "":
+        return []
+    else:
+        module_path = os.path.join(dir_file, module)
+        module_dict = {}
+        for keys in corpus_dict:
+            if keys.startswith(module_path):
+                module_dict[keys] = corpus_dict[keys]
+        if len(module_dict) <= 3:
+            return list(module_dict.values())
+        else:
+            return list(module_dict.keys())
 
 def get_corpus(test_dir: str, dataset: str, instance_id: str) -> Dict[str, str]:
     if '-function_' in instance_id:
@@ -134,11 +168,18 @@ def get_functions(corpus_dict: Dict[str, str], func_paths: str) -> List[str]:
         if not isinstance(path, str):
             result.append(f"Invalid path: {path}. Paths must be strings.")
             continue
+        # If path is a valid function path, directly append its' content to the result.
         if path in corpus_dict:
             result.append(corpus_dict[path])
         else:
-            suggestions = find_similar_path(corpus_dict, path)
-            result.append(suggestions)
+            # If path is a valid class path.
+            suggestions = check_module(corpus_dict, path)
+            if suggestions != []:
+                result.append(suggestions)
+            else:
+                # If path is neither a valid function nor the module, return similar function paths.
+                suggestions = find_similar_path(corpus_dict, path)
+                result.append(suggestions)
     return result
 
 def get_file(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
@@ -153,26 +194,48 @@ def get_file(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
     except json.JSONDecodeError as _:
         return "JSON failed to load. Please check the format."
 
-    result = [corpus_dict[func_path] for func_path in corpus_dict.keys()
-              if func_path.startswith(path)]
+    result = {}
+    for func_path in corpus_dict.keys():
+        if func_path.startswith(path):
+            result[func_path] = corpus_dict[func_path]
     if not result:
-        result.append(f"No functions found for file path '{path}'. Please check if the file path exists in the corpus.")
-    return result
+        result[path] = f"No functions found for file path '{path}'. Please check if the file path exists in the corpus."
+    if len(result) > 20:
+        return "Too many functions in this file. Here this tool will give you a list of function names contained in this file. If you wanna check more details about a few of them, please call 'get_functions'. " + str(result.keys())
+    return result.values()
 
-# Warning: this should not be used since it lists too many names and confuse the agent
-def list_function_directory(corpus_dict: Dict[str, str], file_or_module_path: str) -> List[str]:
+def list_function_directory(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
     try:
-        input_data = json.loads(file_or_module_path)
-        if not isinstance(input_data, dict) or "file_or_module_path" not in input_data:
-            return "Input must be a valid JSON sting with a 'file_or_module_path' key"
-        path = input_data["file_or_module_path"]
+        input_data = json.loads(file_path)
+        if not isinstance(input_data, dict) or "file_path" not in input_data:
+            return "Input must be a valid JSON sting with a 'file_path' key"
+        path = input_data["file_path"]
         if not isinstance(path, str):
-            return "'file_or_module_path' value must be a string."
+            return "'file_path' value must be a string."
     except json.JSONDecodeError as _:
         return "JSON failed to load. Please check the format."
 
     result = [func_path for func_path in corpus_dict.keys()
               if func_path.startswith(path)]
+    
+    # TODO: Add a *.py here to avoid checking all functions within a dir.
+    # TODO: However, if it is a specific .py file, list all functions here 
+    # TODO: to avoid some critical functions never known to LLM.
+    if len(result) > 50 and path.endswith("*.py"):
+        class_paths_set = set()
+        for func_path in result:
+            file_part, module_func_part = _split_path(func_path)
+            
+            if module_func_part:
+                parts = module_func_part.split('.')
+                if len(parts) >= 2:
+                    module_path = os.path.join(file_part, parts[0])
+                    class_paths_set.add(module_path)
+        
+        class_paths = list(class_paths_set)
+        
+        return f"Too many functions in this {file_path}. Instead, here list all the modules' names within this scope." + str(class_paths[:50])
+
     if not result:
         result.append(f"No functions found for file path '{path}'.")
     return result
@@ -279,31 +342,13 @@ def transform_graph(call_graph):
 #         return f"Error: Missing required parameter: {e}"
 #     except Exception as e:
 #         return f"Error: {str(e)}"
-    
+
 def _get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_function: str) -> str:
     def _check_valid(path):
         if path in corpus_dist:
             return ""
         else:
             return find_similar_path(corpus_dist, path)
-
-    def _split_path(path):
-        # find file first. Always assume there is a .py file in the path.
-        py_index = path.find('.py')
-        if py_index == -1:
-            return path, ""
-        
-        # dir + file
-        first_part = path[:py_index + 3]  # include ".py"
-        
-        # (module) + function
-        second_part = path[py_index + 3:]
-        if second_part.startswith('/'):
-            second_part = second_part[1:]
-
-        # code2flow requires '.' to connect module and function
-        second_part = second_part.replace('/', '.')
-        return first_part, second_part
     
     def _load_json_call_graph():
         with open("tmp/call_graph.json", "r") as file:
@@ -313,9 +358,6 @@ def _get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_func
                 json.dump(simple_call_graph, f, indent=2, ensure_ascii=False)
             return simple_call_graph
 
-    # TODO: here we suppose target function is a function path.
-    # TODO: we need to split it into scope and target-function
-    # TODO: meanwhile we need to handle multiple errors.
     suggestions = _check_valid(target_function)
     if suggestions != "":
         return suggestions
@@ -383,13 +425,15 @@ def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_funct
     except Exception as e:
         return f"Error: {str(e)}"
 
+
 def main():
     dataset = "swe-bench-lite"
-    instance_id = "sympy__sympy-21612"
+    instance_id = "pytest-dev__pytest-7220"
     corpus = get_corpus("datasets", dataset, instance_id)
     test_funcs = False
     test_file = False
-    test_call_graph = True
+    test_call_graph = False
+    test_keywords_search = True
     if test_funcs:
         example_func_path = '{"func_paths": ["sklearn/model_selection/_split.py/_BaseKFold/__init__"]}'
         funcs = get_functions(corpus, example_func_path)
@@ -400,8 +444,12 @@ def main():
         print("funcs: ", len(funcs))
     if test_call_graph:
         instance_path = os.path.join(dataset, instance_id)
-        params = '{"target_function": "sympy/parsing/latex/__init__.py/parse_latex"}'
+        params = '{"target_function": "src/_pytest/_code/code.py/filter_traceback"}'
         result = get_call_graph(corpus, instance_path, params)
+        print("result: ", result)
+    if test_keywords_search:
+        keywords = '{"keywords": ["repr"]}'
+        result = get_keyword_search(corpus, keywords)
         print("result: ", result)
 
 if __name__ == "__main__":
