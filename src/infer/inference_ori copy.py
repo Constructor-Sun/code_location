@@ -14,7 +14,6 @@ from langchain.memory import ConversationBufferMemory
 from langchain.tools import StructuredTool
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.prompts import PromptTemplate
-
 # from langchain_huggingface import HuggingFacePipeline
 # from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
@@ -56,7 +55,7 @@ def create_agent(llm, tools):
     #     SystemMessage(content=SYSTEM_PROMPT),
     #     HumanMessage(content="{input}"),
     # ])
-    prompt = PromptTemplate.from_template(REACT_PROMPT)
+    prompt = hub.pull("hwchase17/react")
     memory = ConversationBufferMemory(return_messages=True, memory_key="chat_history")
 
     # agent = ConversationalAgent.from_llm_and_tools(
@@ -116,7 +115,7 @@ def main():
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--inference_model", type=str, default="Qwen/Qwen3-Coder-30B-A3B-Instruct")
     parser.add_argument("--top_k", type=int, default=10)
-    parser.add_argument("--target", type=str, default="sympy__sympy-21612")
+    parser.add_argument("--target", type=str, default="django__django-12125")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
 
