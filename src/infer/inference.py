@@ -23,10 +23,12 @@ from prompt import *
 from tools import (
     get_corpus, 
     get_functions, 
+    get_class,
     get_file, 
     list_function_directory,
     get_call_graph,
     GetFunctionsInput,
+    GetClassInput,
     GetFileInput,
     ListFunctionDirectoryInput,
     GetCallGraphInput
@@ -116,7 +118,7 @@ def main():
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--inference_model", type=str, default="Qwen/Qwen3-Coder-30B-A3B-Instruct")
     parser.add_argument("--top_k", type=int, default=10)
-    parser.add_argument("--target", type=str, default="sympy__sympy-21612")
+    parser.add_argument("--target", type=str, default="sympy__sympy-12419")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
 
@@ -141,6 +143,14 @@ def main():
             name="get_functions",
             description="Retrieve function code from corpus dictionary for one or multiple function paths",
             args_schema=GetFunctionsInput,
+            return_direct=False,
+            handle_tool_error=True,
+        ),
+        StructuredTool.from_function(
+            func=partial(get_class, corpus),
+            name="get_class",
+            description="Retrieve class content from corpus dictionary",
+            args_schema=GetClassInput,
             return_direct=False,
             handle_tool_error=True,
         ),

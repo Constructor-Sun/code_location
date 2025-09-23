@@ -4,18 +4,8 @@ import subprocess
 import difflib
 from typing import Dict, List, Union
 from pydantic import BaseModel, Field
-# _original_get_call_from_func_element = code2flow.python.get_call_from_func_element
 
-# def patched_get_call_from_func_element(func):
-#     actual_type = type(func)
-#     expected_types = (ast.Attribute, ast.Name, ast.Subscript, ast.Call)
-    
-#     if actual_type not in expected_types:
-#         print(f"Unexpected func type: {actual_type}")
-#         print(f"Func element: {ast.dump(func)}")
-#         return None
-    
-#     return _original_get_call_from_func_element(func)
+MAX_NUM = 20
 
 class GetFunctionsInput(BaseModel):
     func_paths: str = Field(
@@ -27,6 +17,19 @@ class GetFunctionsInput(BaseModel):
         """,
         examples=[
             '{"func_paths": ["sklearn/base.py/DensityMixin/score", "build_tools/github/vendor.py/main"]}'
+            ]
+    )
+
+class GetClassInput(BaseModel):
+    func_paths: str = Field(
+        ...,
+        description="""
+            Reveal targeted class contents.
+            Input: a JSON string containing a valid class paths. The key is "class_path".
+            Note: Paths should reference specific class, NOT just files or directories.
+        """,
+        examples=[
+            '{"class_path": "sklearn/base.py/DensityMixin"}'
             ]
     )
 
@@ -55,26 +58,6 @@ class ListFunctionDirectoryInput(BaseModel):
             '{"file_path": "sklearn/pipeline.py"}'
             ]
     )
-
-# class GetCallGraphInput(BaseModel):
-#     params: str = Field(
-#         ...,
-#         description="""
-#             JSON string with parameters: {'scopes': [], 'target_function': ''}.
-#             Scopes: List[str]
-#                 List of scope directories to analyze for the call graph.
-#                 Only accept directory path. DO NOT enter py file name.
-#                 Must be in the form: directory_path
-#             target_function: str
-#                 The target function name to generate the call graph for.
-#                 Must be in the form: function_name or class_name.function_name.
-#                 DO NOT input class_name only
-#         """,
-#         examples=[
-#             '{"scopes": ["sklearn/", "sklearn/utils/"], "target_function": "get_parser"}',
-#             '{"scopes": ["models/", "controllers/"], "target_function": "User.create"}',
-#         ]
-#     )
 
 class GetCallGraphInput(BaseModel):
     params: str = Field(
@@ -176,13 +159,35 @@ def get_functions(corpus_dict: Dict[str, str], func_paths: str) -> List[str]:
             # If path is a valid class path.
             suggestions = check_module(corpus_dict, path)
             if suggestions != []:
-                suggestions = "It seems that you entered a class name, this class contain the following functions: " + ", ".join(suggestions)
+                # suggestions = "It seems that you entered a class name, this class contain the following functions: " + ", ".join(suggestions)
+                suggestions = "It seems that you entered a class name, try use 'get_class' tool to reveal this class"
                 result.append(suggestions)
             else:
                 # If path is neither a valid function nor the module, return similar function paths.
                 suggestions = find_similar_path(corpus_dict, path)
                 result.append(suggestions)
     return result
+
+def get_class(corpus_dict: Dict[str, str], class_path: str) -> List[str]:
+    try:
+        # Parse the JSON string, expecting an object with 'class_path' key
+        input_data = json.loads(class_path)
+        if not isinstance(input_data, dict) or "class_path" not in input_data:
+            return "Input must be a valid JSON sting with a 'class_path' key"
+        path = input_data["class_path"]
+        if not isinstance(path, str):
+            return "'class_path' value must be a str"
+    except json.JSONDecodeError as _:
+        return "JSON failed to load. Please check the format."
+    
+    result = []
+    for key in corpus_dict.keys():
+        if key.startswith(path):
+            result.append(corpus_dict[key])
+    if result == []:
+        return "Not a valid class name. Try enter a valid class name."
+    else:
+        return result
 
 def get_file(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
     try:
@@ -202,8 +207,9 @@ def get_file(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
             result[func_path] = corpus_dict[func_path]
     if not result:
         result[path] = f"No functions found for file path '{path}'. Please check if the file path exists in the corpus."
-    if len(result) > 20:
-        return "Too many functions in this file. Here this tool will give you a list of function names contained in this file. If you wanna check more details about a few of them, please call 'get_functions'. " + str(result.keys())
+    if len(result) > MAX_NUM:
+        return list_function_directory(corpus_dict, file_path)
+        # return "Too many functions in this file. Here this tool will give you a list of function names contained in this file. If you wanna check more details about a few of them, please call 'get_functions'. " + str(result.keys())
     return result.values()
 
 def list_function_directory(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
@@ -223,20 +229,28 @@ def list_function_directory(corpus_dict: Dict[str, str], file_path: str) -> List
     # TODO: Add a *.py here to avoid checking all functions within a dir.
     # TODO: However, if it is a specific .py file, list all functions here 
     # TODO: to avoid some critical functions never known to LLM.
-    if len(result) > 50 and path.endswith("*.py"):
+    if len(result) > MAX_NUM:
         class_paths_set = set()
+        module_level_function_paths_set = set()
         for func_path in result:
             file_part, module_func_part = _split_path(func_path)
             
             if module_func_part:
                 parts = module_func_part.split('.')
-                if len(parts) >= 2:
+                if len(parts) > 1:
                     module_path = os.path.join(file_part, parts[0])
                     class_paths_set.add(module_path)
+                else:
+                    function_path = os.path.join(file_part, parts[0])
+                    module_level_function_paths_set.add(function_path)
         
         class_paths = list(class_paths_set)
         
-        return f"Too many functions in this {file_path}. Instead, here list all the modules' names within this scope." + str(class_paths[:50])
+        return (
+            f"Too many functions in {path}. Instead, we have a brief intro. \n"
+            f"This file contains modules: {str(class_paths)} \n"
+            f"This file also contains module-level functions: {str(module_level_function_paths_set)}"
+            )
 
     if not result:
         result.append(f"No functions found for file path '{path}'.")
@@ -407,9 +421,7 @@ def _get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_func
                 #     ) from e
                 print(f"Finding {module_function} in {scope} has unexpected errors: {e}. Please check the tool.")
                 continue
-    return f"""
-        get_call_graph cannot analyze this function due to its inner flaws. This tool then use 'get_functions' to reveal the content of {target_function}
-    """ + str(get_functions(corpus_dist, '{"func_paths": ["' + target_function + '"]}'))
+    return f"get_call_graph cannot analyze this function due to its inner flaws. This tool then use 'get_functions' to reveal the content of {target_function}: " + str(get_functions(corpus_dist, '{"func_paths": ["' + target_function + '"]}'))
     
 def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_function: str) -> str:
     try:
@@ -430,26 +442,35 @@ def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_funct
 
 def main():
     dataset = "swe-bench-lite"
-    instance_id = "sympy__sympy-23262"
+    instance_id = "sympy__sympy-12419"
     corpus = get_corpus("datasets", dataset, instance_id)
-    test_funcs = True
+    test_funcs = False
+    test_class = True
     test_file = False
     test_call_graph = False
-    # test_keywords_search = True
+    test_lists = False
     if test_funcs:
-        example_func_path = '{"func_paths": ["sympy/printing/pycode.py/PythonCodePrinter"]}'
+        example_func_path = '{"func_paths": ["sympy/matrices/expressions/matexpr.py/Identity/_entry"]}'
         funcs = get_functions(corpus, example_func_path)
         print("funcs: ", funcs)
+    if test_class:
+        example_func_path = '{"class_path": "sympy/matrices/expressions/matexpr.py/Identity"}'
+        funcs = get_class(corpus, example_func_path)
+        print("class: ", funcs)
     if test_file:
-        file_path = '{"file_path": "sympy/parsing/latex/__init__.py"}'
+        file_path = '{"file_path": "sympy/matrices/expressions/matexpr.py"}'
         funcs = get_file(corpus, file_path)
-        print("funcs: ", len(funcs))
+        print("funcs: ", funcs)
     if test_call_graph:
         instance_path = os.path.join(dataset, instance_id)
         params = '{"target_function": "src/_pytest/_code/code.py/filter_traceback"}'
         result = get_call_graph(corpus, instance_path, params)
         print("result: ", result)
-    # if test_keywords_search:
+    if test_lists:
+        file_path = '{"file_path": "sympy/matrices/expressions/matexpr.py"}'
+        funcs = list_function_directory(corpus, file_path)
+        print("funcs: ", funcs)
+    # if test_lists:
     #     keywords = '{"keywords": ["repr"]}'
     #     result = get_keyword_search(corpus, keywords)
     #     print("result: ", result)

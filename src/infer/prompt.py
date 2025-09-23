@@ -15,30 +15,27 @@ Fixing it means:
 FIRST_PROMPT = """
 Given the following GitHub problem description, your objective is to localize the specific functions that need modification or contain key information to resolve the issue. You have an initial candidate functions for reference.
 - Issue Description: {query}
-- Initial Candidate List (preds): {preds}
+- Initial Candidate Functions (preds): {preds}
 
 Follow these steps to localize the issue:
-## Step 1: Categorize and Extract Key Problem Information
- - Classify the problem statement into the following categories:
+## Step 1: Categorize Issue Description and Find Entry Points
+ - Classify the issue description into the following categories:
     Problem description, error trace, code to reproduce the bug, and additional context.
- - Check the inital code candidates for references for additional context.
+ - Identify main entry points triggering the issue。
 
 ## Step 2: Locate Referenced Modules
-- Accurately determine specific modules
-    - Explore the repo to familiarize yourself with its structure.
+- Accurately determine specific modules, starting from entry points in step 1
+    - Explore the repo to familiarize yourself with its structure. # TODO: a function should be implemented?
     - Analyze the described execution flow to identify specific modules or components being referenced.
+- Prioritize the inital code candidates (preds): they are retrieved as root cause functions with high probability.
 - Pay special attention to distinguishing between modules with similar names using context and described execution flow.
-- Output Format for collected relevant modules:
-    - Use the format: 'file_path/QualifiedName'
-    - E.g., for a function `calculate_sum` in the `MathUtils` class located in `src/helpers/math_helpers.py`, represent it as: 'src/helpers/math_helpers.py/MathUtils/calculate_sum'.
 
-## Step 3: Analyze and Reproducing the Problem
+## Step 3: Analyze and Reproduces the Problem
 - Clarify the Purpose of the Issue
-    - If expanding capabilities: Identify where and how to incorporate new behavior, or fields.
+    - If expanding capabilities: Identify function which are feasible to incorporate new behavior, or fields.
     - If addressing unexpected behavior: Focus on localizing functions containing potential bugs.
 - Reconstruct the execution flow
-    - Identify main entry points triggering the issue.
-    - Trace function calls, class interactions, and sequences of events.
+    - Trace the calls from the entry point through the modules identified in Step 2.
     - Identify potential breakpoints causing the issue.
     Important: Keep the reconstructed flow focused on the problem, avoiding irrelevant details.
 
@@ -48,37 +45,28 @@ Follow these steps to localize the issue:
 - If applicable, identify where to introduce new fields, functions, or variables.
 - Think Thoroughly: List multiple potential solutions and consider edge cases that could impact the resolution.
 
-**Tool calls hint**:
-- "get_call_graph" Format: '{{"target_function": ''}}'
-- "get_functions" Format: '{{"func_paths": []}}'
-- "list_function_directory" Format : '{{"file_path": ''}}'
-- "get_file"Format: '{{"target_function": ''}}'
-
 ## Output Format for Final Results:
-Your final output should list the locations requiring modification, wrapped with triple backticks ```
-Each location should include the file path, class name (if applicable), function name, ordered by importance.
-Your answer would better include exactly 10 files.
-
-## Examples:
+Your answer should include exactly 10 functions, return a JSON string with key "updated_andidates".
+Warning: You should not give class names. Try give module-level function names or in-class methods
 {{
-    "reasons": "A detailed explanation of changes (e.g., 'Based on names, prioritized issue-related files. After reading FunctionA, it is much more fundamental to the issue. Added ModuleB.FunctionA and removed the least relevant candidate')",
     "updated_andidates": ["Must", "be", "function", "names", "not", "class", "names"],
-    "next_step": "final_answer"
 }}
-
-Note: Your thinking should be thorough and so it's fine if it's very long.
 """
 
-REACT_PROMPT = '''
-You are an AI assistant specialized in identifying the "root cause functions" for GitHub issues.
-
-To find them, you have access to the following tools:
+REACT_PROMPT = '''Answer the following questions as best you can. 
+You have access to the following tools:
 {tools}
+**Tool calls Input**:
+- "get_call_graph" Format: '{{"target_function": ''}}'
+- "get_functions" Format: '{{"func_paths": []}}'
+- "get_class" Format: '{{"class_path": ''}}'
+- "list_function_directory" Format : '{{"file_path": ''}}'
+- "get_file"Format: '{{"target_function": ''}}'
 
 Use the following format:
 
 Question: the input question you must answer
-Thought: you should always think about what to do
+Thought: you should always think about what to do. Your thinking should be thorough and so it's fine if it's very long.
 Action: the action to take, should be one of [{tool_names}]. You should only enter tool's name, e.g., 'get_file'
 Action Input: the input to the action
 Observation: the result of the action
