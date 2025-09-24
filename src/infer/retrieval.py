@@ -16,8 +16,8 @@ def get_query(path):
                 return it["text"]
 
 def load_model(retrieval_model_1):
-    tokenizer_1 = AutoTokenizer.from_pretrained(retrieval_model_1, trust_remote_code=False)
-    model_1 = AutoModel.from_pretrained(retrieval_model_1, trust_remote_code=False)
+    tokenizer_1 = AutoTokenizer.from_pretrained(retrieval_model_1, trust_remote_code=False, local_files_only=True)
+    model_1 = AutoModel.from_pretrained(retrieval_model_1, trust_remote_code=False, local_files_only=True)
     model_1.to("cuda:0")
     model_1.eval()
     return tokenizer_1, model_1

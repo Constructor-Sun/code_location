@@ -155,7 +155,7 @@ def main():
             handle_tool_error=True,
         ),
         StructuredTool.from_function(
-            func=partial(get_file, corpus),
+            func=partial(get_file, corpus, os.path.join(args.dataset, args.target)),
             name="get_file",
             description="Retrieve all functions from a specific file path in the corpus dictionary.",
             args_schema=GetFileInput,

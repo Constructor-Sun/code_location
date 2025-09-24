@@ -1,4 +1,5 @@
 import os
+import ast
 import json
 import subprocess
 import difflib
@@ -100,6 +101,51 @@ def find_similar_path(corpus_dict: Dict[str, str], path: str) -> str:
         suggestions = f"{path} not found! Ensure the path points to a specific function, e.g., 'dir/file.py/Module/function'."
     return suggestions
 
+def _get_imports(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        tree = ast.parse(content)
+        import_strings = []
+        
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+                import_str = f"import {', '.join(modules)}"
+                import_strings.append(import_str)
+            elif isinstance(node, ast.ImportFrom):
+                # 处理 from ... import 语句（包括相对导入）
+                names = [alias.name for alias in node.names]
+                
+                # 构建模块名：处理相对导入级别
+                level = '.' * (node.level or 0)  # 相对导入的点号
+                module_part = node.module or ''  # 可能为None（如 from . import something）
+                
+                if level and module_part:
+                    module_str = f"{level}{module_part}"
+                elif level:
+                    module_str = level
+                else:
+                    module_str = module_part
+                
+                # 构建完整的from import语句
+                if module_str:
+                    from_str = f"from {module_str} import {', '.join(names)}"
+                else:
+                    # 处理特殊情况：from . import something
+                    from_str = f"from {level} import {', '.join(names)}"
+                
+                import_strings.append(from_str)
+        
+        return 'This file has global import relations: \n' + '\n'.join(import_strings)
+    except SyntaxError as e:
+        raise ValueError(f"File has syntax error: {e}")
+    except FileNotFoundError:
+        raise FileNotFoundError(f"File not Found: {file_path}")
+    except Exception as e:
+        raise RuntimeError(f"Runtime error: {e}")
+
 def check_module(corpus_dict: Dict[str, str], path: str) -> List[str]:
     dir_file, module_function = _split_path(path)
     module_func_split = module_function.split(".")
@@ -181,6 +227,10 @@ def get_class(corpus_dict: Dict[str, str], class_path: str) -> List[str]:
         return "JSON failed to load. Please check the format."
     
     result = []
+    if path.endswith(".py"):
+        return f"It seems that {path} is a file! Try use get_file tool to reveal its content!"
+    if path in corpus_dict:
+        return f"It seems that {path} is a valid function! Try use get_functions tool to reveal its content!"
     for key in corpus_dict.keys():
         if key.startswith(path):
             result.append(corpus_dict[key])
@@ -189,7 +239,7 @@ def get_class(corpus_dict: Dict[str, str], class_path: str) -> List[str]:
     else:
         return result
 
-def get_file(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
+def get_file(corpus_dict: Dict[str, str], instance_path: str, file_path: str) -> List[str]:
     try:
         # Parse the JSON string, expecting an object with 'file_path' key
         input_data = json.loads(file_path)
@@ -206,11 +256,16 @@ def get_file(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
         if func_path.startswith(path):
             result[func_path] = corpus_dict[func_path]
     if not result:
-        result[path] = f"No functions found for file path '{path}'. Please check if the file path exists in the corpus."
+        return f"No functions found for file path '{path}'. Please check if the file path exists in the corpus."
+    
+    try:
+        import_result = _get_imports(os.path.join(instance_path, path))
+    except Exception as e:
+        return f"{e}"
     if len(result) > MAX_NUM:
-        return list_function_directory(corpus_dict, file_path)
+        return list_function_directory(corpus_dict, file_path) + '\n' + import_result
         # return "Too many functions in this file. Here this tool will give you a list of function names contained in this file. If you wanna check more details about a few of them, please call 'get_functions'. " + str(result.keys())
-    return result.values()
+    return ', '.join(result.values()) + '\n' + import_result
 
 def list_function_directory(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
     try:
@@ -442,12 +497,13 @@ def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_funct
 
 def main():
     dataset = "swe-bench-lite"
-    instance_id = "sympy__sympy-12419"
+    instance_id = "django__django-13158"
     corpus = get_corpus("datasets", dataset, instance_id)
+    instance_path = os.path.join(dataset, instance_id)
     test_funcs = False
-    test_class = True
+    test_class = False
     test_file = False
-    test_call_graph = False
+    test_call_graph = True
     test_lists = False
     if test_funcs:
         example_func_path = '{"func_paths": ["sympy/matrices/expressions/matexpr.py/Identity/_entry"]}'
@@ -458,12 +514,11 @@ def main():
         funcs = get_class(corpus, example_func_path)
         print("class: ", funcs)
     if test_file:
-        file_path = '{"file_path": "sympy/matrices/expressions/matexpr.py"}'
-        funcs = get_file(corpus, file_path)
-        print("funcs: ", funcs)
+        file_path = '{"file_path": "test_path_error.py"}'
+        funcs = get_file(corpus, instance_path, file_path)
+        print("file: ", funcs)
     if test_call_graph:
-        instance_path = os.path.join(dataset, instance_id)
-        params = '{"target_function": "src/_pytest/_code/code.py/filter_traceback"}'
+        params = '{"target_function": "django/forms/models.py/ModelMultipleChoiceField/to_python"}'
         result = get_call_graph(corpus, instance_path, params)
         print("result: ", result)
     if test_lists:

@@ -21,11 +21,11 @@ Follow these steps to localize the issue:
 ## Step 1: Categorize Issue Description and Find Entry Points
  - Classify the issue description into the following categories:
     Problem description, error trace, code to reproduce the bug, and additional context.
- - Identify main entry points triggering the issue。
+ - Identify main entry points triggering the issue in the description.
 
 ## Step 2: Locate Referenced Modules
 - Accurately determine specific modules, starting from entry points in step 1
-    - Explore the repo to familiarize yourself with its structure. # TODO: a function should be implemented?
+    - Explore the repo to familiarize yourself with its structure.
     - Analyze the described execution flow to identify specific modules or components being referenced.
 - Prioritize the inital code candidates (preds): they are retrieved as root cause functions with high probability.
 - Pay special attention to distinguishing between modules with similar names using context and described execution flow.
@@ -45,9 +45,9 @@ Follow these steps to localize the issue:
 - If applicable, identify where to introduce new fields, functions, or variables.
 - Think Thoroughly: List multiple potential solutions and consider edge cases that could impact the resolution.
 
-## Output Format for Final Results:
-Your answer should include exactly 10 functions, return a JSON string with key "updated_andidates".
-Warning: You should not give class names. Try give module-level function names or in-class methods
+## Final Answer Format:
+Final answer should include exactly 10 functions, return a valid JSON string with key "updated_andidates".
+Warning: You should not give class names. Try give module-level function names or in-class methods.
 {{
     "updated_andidates": ["Must", "be", "function", "names", "not", "class", "names"],
 }}
@@ -57,17 +57,17 @@ REACT_PROMPT = '''Answer the following questions as best you can.
 You have access to the following tools:
 {tools}
 **Tool calls Input**:
-- "get_call_graph" Format: '{{"target_function": ''}}'
-- "get_functions" Format: '{{"func_paths": []}}'
-- "get_class" Format: '{{"class_path": ''}}'
-- "list_function_directory" Format : '{{"file_path": ''}}'
-- "get_file"Format: '{{"target_function": ''}}'
+- get_call_graph Format: '{{"target_function": ''}}'
+- get_functions Format: '{{"func_paths": []}}'
+- get_class Format: '{{"class_path": ''}}'
+- list_function_directory Format : '{{"file_path": ''}}'
+- get_file Format: '{{"target_function": ''}}'
 
 Use the following format:
 
 Question: the input question you must answer
-Thought: you should always think about what to do. Your thinking should be thorough and so it's fine if it's very long.
-Action: the action to take, should be one of [{tool_names}]. You should only enter tool's name, e.g., 'get_file'
+Thought: You should always znalyze the question or observation comprehensively, and then device want you should do. Your thinking should be thorough and so it's fine if it's very long.
+Action: the action to take, should be one of [{tool_names}]. You should only enter tool's name, e.g., get_file
 Action Input: the input to the action
 Observation: the result of the action
 ... (this Thought/Action/Action Input/Observation can repeat N times)
@@ -79,6 +79,24 @@ Begin!
 Question: {input}
 Thought: {agent_scratchpad}
 '''
+
+## Step 5: Self-Reflection
+# - Review the call graph of identified functions. Investigate if any functions within the graph are more fundamental to the issue.
+#   - If call graph analysis is unavailable, examine the functions called by the initially identified functions directly.
+# - You are highly suggested to examine the complete class and file containing the located functions to determine if more fundamental classes or functions exist.
+# - Re-evaluate the currently identified functions and update them if more fundamental root causes are found.
+
+
+## Step 3: Expand Referenced Modules and Functions
+# - Summarize every referenced modules and functions in your THOUGHT (don't worry about lengths and tokens):
+#     - For modules you must include: 
+#         - parent-child between packages/submodules
+#         - Import/export links between modules
+#         - Interactions via shared interfaces/base classes
+#     - For functions you must include:
+#         - caller-callee relationships
+#         - Parameter dependencies (e.g., passed objects/classes)
+#         - Inheritance and interface chains
 
 
 # REACT_PROMPT = '''Answer the following questions as best you can. 
