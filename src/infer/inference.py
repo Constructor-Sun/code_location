@@ -3,7 +3,11 @@ os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import json
 import argparse
+import random
+import numpy as np
+import torch
 import torch.distributed as dist
+import multiprocessing
 from datetime import datetime
 from functools import partial
 from langchain import hub
@@ -34,21 +38,33 @@ from tools import (
     GetCallGraphInput
 )
 
+def set_global_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+
 def load_inference_model(model_name, device="cuda:1"):
+    mp_context = multiprocessing.get_context('spawn')
     llm = VLLM(
         model=model_name,
-        max_new_tokens=81920, # 65536
-        temperature=0.7,
+        max_new_tokens=81920,
+        temperature=0, # 0.7
         top_p=0.8,
         top_k=20,
-        do_sample=True,
+        do_sample=False, # True
         repetition_penalty=1.2,
         return_full_text=False,
         vllm_kwargs={
             "max_model_len": 81920,
             "gpu_memory_utilization": 0.9,
             "enable_chunked_prefill": True,
-            "max_num_batched_tokens": 65536,
+            "max_num_batched_tokens": 65536
         }
     )
     return llm
@@ -87,7 +103,7 @@ def create_agent(llm, tools):
 def save_conversation_history(agent, output_dir="tmp"):
     # Generate a unique filename using timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = os.path.join(output_dir, f"conversation_history_{timestamp}.json")
+    output_path = os.path.join(output_dir, f"conversation_history.json")
     messages = agent.memory.chat_memory.messages
     
     history = []
@@ -111,6 +127,7 @@ def save_conversation_history(agent, output_dir="tmp"):
     return output_path
 
 def main():
+    set_global_seed()
     parser = argparse.ArgumentParser()
     parser.add_argument("--embed_dir", type=str, default="test_index")
     parser.add_argument("--test_dir", type=str, default="datasets")

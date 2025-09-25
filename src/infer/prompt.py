@@ -22,34 +22,42 @@ Follow these steps to localize the issue:
  - Classify the issue description into the following categories:
     Problem description, error trace, code to reproduce the bug, and additional context.
  - Identify main entry points triggering the issue in the description.
+ - Prioritize the inital code candidates (preds): they are retrieved as root cause functions with high probability.
 
-## Step 2: Locate Referenced Modules
-- Accurately determine specific modules, starting from entry points in step 1
+## Step 2: Locate Referenced Classes
+- Accurately determine specific classes, starting from entry points in step 1
     - Explore the repo to familiarize yourself with its structure.
-    - Analyze the described execution flow to identify specific modules or components being referenced.
-- Prioritize the inital code candidates (preds): they are retrieved as root cause functions with high probability.
-- Pay special attention to distinguishing between modules with similar names using context and described execution flow.
+    - Analyze the described execution flow to identify specific classes or module-level functions being referenced.
+- Pay special attention to distinguishing between classes with similar names using context and described execution flow.
 
-## Step 3: Analyze and Reproduces the Problem
+## Step 3: Locate Functions in Classes
+- Analyze each class identified in step 2 to pinpoint critical functions
+    - Focus on functions that drive the described execution flow
+- Distinguish between core functionality and utility/helper functions using context and execution flow analysis
+
+## Step 4: Analyze and Reproduces the Problem
 - Clarify the Purpose of the Issue
     - If expanding capabilities: Identify function which are feasible to incorporate new behavior, or fields.
     - If addressing unexpected behavior: Focus on localizing functions containing potential bugs.
 - Reconstruct the execution flow
-    - Trace the calls from the entry point through the modules identified in Step 2.
-    - Identify potential breakpoints causing the issue.
-    Important: Keep the reconstructed flow focused on the problem, avoiding irrelevant details.
+    - Trace the calls from the entry point through the classes identified in Step 2.
+    - Identify potential breakpoints causing the issue. 
 
-## Step 4: Locate Areas for Modification
-- Locate specific functions requiring changes or containing critical information for resolving the issue.
-- Consider upstream and downstream dependencies that may affect or be affected by the issue.
-- If applicable, identify where to introduce new fields, functions, or variables.
-- Think Thoroughly: List multiple potential solutions and consider edge cases that could impact the resolution.
+## Step 5: Identify Target Functions for Modification
+- Extract those root-cause functions causing the issue
+- Determine which functions require changes to fully resolve the issue
+    - You should adopt a systemic view: focus on minimal but impactful changes
+    - If functions are at the execution flow, try locate those on the upstream
+    - If issue occurs in a class, try locate those key functions
+- Return a list of functions to be modified, rank them in:
+    - Functions to be modified to solve the issue
+    - Functions related to the issue
 
 ## Final Answer Format:
-Final answer should include exactly 10 functions, return a valid JSON string with key "updated_andidates".
+Final answer should include exactly 10 functions, return a valid JSON string with key "updated_functions".
 Warning: You should not give class names. Try give module-level function names or in-class methods.
 {{
-    "updated_andidates": ["Must", "be", "function", "names", "not", "class", "names"],
+    "updated_functions": ["Must", "be", "function", "names", "not", "class", "names"],
 }}
 """
 
@@ -79,6 +87,16 @@ Begin!
 Question: {input}
 Thought: {agent_scratchpad}
 '''
+
+# Important: do not afraid to check all possible classes and functions
+
+# ## Step 5: Locate Only Functions for Modification
+# - Locate specific functions requiring changes or containing critical information for resolving the issue.
+# - Consider upstream and downstream dependencies that may affect or be affected by the issue.
+# - If applicable, identify where to introduce new fields, functions, or variables.
+# - Think Thoroughly: List multiple potential solutions and consider edge cases that could impact the resolution.
+
+# Important: Keep the reconstructed flow focused on the problem, avoiding irrelevant details.
 
 ## Step 5: Self-Reflection
 # - Review the call graph of identified functions. Investigate if any functions within the graph are more fundamental to the issue.

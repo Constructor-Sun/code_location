@@ -206,7 +206,7 @@ def get_functions(corpus_dict: Dict[str, str], func_paths: str) -> List[str]:
             suggestions = check_module(corpus_dict, path)
             if suggestions != []:
                 # suggestions = "It seems that you entered a class name, this class contain the following functions: " + ", ".join(suggestions)
-                suggestions = "It seems that you entered a class name, try use 'get_class' tool to reveal this class"
+                suggestions = f"It seems that {path} is a class name, try use 'get_class' tool to reveal this class"
                 result.append(suggestions)
             else:
                 # If path is neither a valid function nor the module, return similar function paths.
@@ -226,15 +226,15 @@ def get_class(corpus_dict: Dict[str, str], class_path: str) -> List[str]:
     except json.JSONDecodeError as _:
         return "JSON failed to load. Please check the format."
     
-    result = []
+    result = {}
     if path.endswith(".py"):
         return f"It seems that {path} is a file! Try use get_file tool to reveal its content!"
     if path in corpus_dict:
         return f"It seems that {path} is a valid function! Try use get_functions tool to reveal its content!"
     for key in corpus_dict.keys():
         if key.startswith(path):
-            result.append(corpus_dict[key])
-    if result == []:
+            result[key] = corpus_dict[key]
+    if result == {}:
         return "Not a valid class name. Try enter a valid class name."
     else:
         return result
