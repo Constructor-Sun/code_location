@@ -548,20 +548,20 @@ def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_funct
 
 def main():
     dataset = "swe-bench-lite"
-    instance_id = "django__django-13158"
+    instance_id = "matplotlib__matplotlib-24334"
     corpus = get_corpus("datasets", dataset, instance_id)
     instance_path = os.path.join(dataset, instance_id)
-    test_funcs = False
+    test_funcs = True
     test_class = False
     test_file = False
-    test_call_graph = True
+    test_call_graph = False
     test_lists = False
     if test_funcs:
-        example_func_path = '{"func_paths": ["sympy/matrices/expressions/matexpr.py/Identity/_entry"]}'
+        example_func_path = '{"func_paths": ["lib/matplotlib/axis.py/Axis/set_ticks"]}'
         funcs = get_functions(corpus, example_func_path)
         print("funcs: ", funcs)
     if test_class:
-        example_func_path = '{"class_path": "sympy/matrices/expressions/matexpr.py/Identity"}'
+        example_func_path = '{"class_path": "lib/matplotlib/axis.py/Axis"}'
         funcs = get_class(corpus, example_func_path)
         print("class: ", funcs)
     if test_file:

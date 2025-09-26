@@ -13,7 +13,7 @@ Fixing it means:
 """
 
 FIRST_PROMPT = """
-Given the following GitHub problem description, your objective is to localize the specific functions that need modification or contain key information to resolve the issue. You have an initial candidate functions for reference.
+Given the following GitHub problem description, your objective is to localize the specific functions that need modification or contain key information to resolve the issue. You have initial candidate functions for reference.
 - Issue Description: {query}
 - Initial Candidate Functions (preds): {preds}
 
@@ -34,26 +34,22 @@ Follow these steps to localize the issue:
 
 ## Step 3: Expand Your Thoughts
 - Assume the issue involves classes from Step 2 to trace additional bug paths.
-  - LOOP: For each class (4-5 total), invoke get_functions to analyze issue propagation within it.
+  - LOOP: For each class (4-5 total), invoke get_functions (3~4 functions within this class) to analyze issue propagation within it.
   - END LOOP: All Step 2 classes covered.
 
 ## Step 4: Identify Target Functions for Modification
-- Extract those root-cause functions causing the issue
+- Extract those root-cause functions causing the issue, normally it covers 1~2 functions since it's about functional chain rather than architecture.
 - Determine which functions require changes to fully resolve the issue
-    - You should adopt a systemic view: focus on minimal but impactful changes
-    - If functions are at the execution flow, try locate those on the upstream
-    - If issue occurs in a class, try locate those key functions
-- Return a list of functions to be modified, rank them in:
-    - Functions to be modified to solve the issue
-    - Functions related to the issue
+    - Try consider functions in different classes in Step 2, with each about 3 steps
+    - You should not list too much function within single class since it is not a architecture issue
 
 ## Step 5: Self-reflection
-- Check if your final results (exactly 10 functions) are all valid functions path:
-    - LOOP Start: use check_validation to check your all 10 functions. If not, reflect about your past thinking and correct your final answers.
+- Check if your final results (exactly 20 functions) are all valid functions path:
+    - LOOP Start: use check_validation to check all your results. If not, reflect about your past thinking and correct your final answers.
     - LOOP END: tool results shows that all functions are all valid (return empty list)
 
 ## Final Answer Format:
-Final answer should include exactly 10 functions, return a valid JSON string with key "updated_functions".
+Final answer should include exactly 20 functions, return a valid JSON string with key "updated_functions".
 Warning: You should not give class names. Try give module-level function names or in-class methods.
 {{
     "updated_functions": ["Must", "be", "function", "names", "not", "class", "names"],
