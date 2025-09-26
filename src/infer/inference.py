@@ -1,13 +1,12 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
 import json
 import argparse
 import random
 import numpy as np
 import torch
 import torch.distributed as dist
-import multiprocessing
 from datetime import datetime
 from functools import partial
 from langchain import hub
@@ -24,19 +23,7 @@ from langchain_core.prompts import PromptTemplate
 
 from retrieval import retrieve
 from prompt import *
-from tools import (
-    get_corpus, 
-    get_functions, 
-    get_class,
-    get_file, 
-    list_function_directory,
-    get_call_graph,
-    GetFunctionsInput,
-    GetClassInput,
-    GetFileInput,
-    ListFunctionDirectoryInput,
-    GetCallGraphInput
-)
+from tools import *
 
 def set_global_seed(seed=42):
     random.seed(seed)
@@ -50,18 +37,18 @@ def set_global_seed(seed=42):
     os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 
 def load_inference_model(model_name, device="cuda:1"):
-    mp_context = multiprocessing.get_context('spawn')
     llm = VLLM(
         model=model_name,
-        max_new_tokens=81920,
+        max_new_tokens=102400,
         temperature=0, # 0.7
         top_p=0.8,
         top_k=20,
         do_sample=False, # True
         repetition_penalty=1.2,
         return_full_text=False,
+        tensor_parallel_size=2,
         vllm_kwargs={
-            "max_model_len": 81920,
+            "max_model_len": 102400,
             "gpu_memory_utilization": 0.9,
             "enable_chunked_prefill": True,
             "max_num_batched_tokens": 65536
@@ -102,7 +89,7 @@ def create_agent(llm, tools):
 
 def save_conversation_history(agent, output_dir="tmp"):
     # Generate a unique filename using timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = os.path.join(output_dir, f"conversation_history.json")
     messages = agent.memory.chat_memory.messages
     
@@ -135,7 +122,7 @@ def main():
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--inference_model", type=str, default="Qwen/Qwen3-Coder-30B-A3B-Instruct")
     parser.add_argument("--top_k", type=int, default=10)
-    parser.add_argument("--target", type=str, default="sympy__sympy-12419")
+    parser.add_argument("--target", type=str, default="sympy__sympy-23262")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
 
@@ -155,6 +142,22 @@ def main():
     # response = chain.invoke(input_data)
  
     tools = [
+        # StructuredTool.from_function(
+        #     func=partial(get_thought),
+        #     name="get_thought",
+        #     description="You should put your thought as parameters",
+        #     args_schema=GetThoughtInput,
+        #     return_direct=False,
+        #     handle_tool_error=True,
+        # ),
+        StructuredTool.from_function(
+            func=partial(check_validation, corpus),
+            name="check_validation",
+            description="Check if all functions are valid at the final step",
+            args_schema=CheckValidationInput,
+            return_direct=False,
+            handle_tool_error=True,
+        ),
         StructuredTool.from_function(
             func=partial(get_functions, corpus),
             name="get_functions",

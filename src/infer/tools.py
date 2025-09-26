@@ -8,6 +8,31 @@ from pydantic import BaseModel, Field
 
 MAX_NUM = 20
 
+class GetThoughtInput(BaseModel):
+    thoughts: str = Field(
+        ...,
+        description="""
+            Give you a chance to think thoroughly.
+            Input: a JSON string containing a string of your thoughts. The key is "thoughts".
+            Note: This function only helps you to think further, so nothing will be returned.
+        """,
+        examples=[
+            '{"thoughts": "This class mainly ..."}'
+            ]
+    )
+
+class CheckValidationInput(BaseModel):
+    func_paths: str = Field(
+        ...,
+        description="""
+            Check if all function paths are valid. Only allowed at the final step.
+            Input: a JSON string containing a list of function paths. The key is "func_paths".
+        """,
+        examples=[
+            '{"func_paths": ["function_a", "function_b", ...]'
+            ]
+    )
+
 class GetFunctionsInput(BaseModel):
     func_paths: str = Field(
         ...,
@@ -163,6 +188,29 @@ def check_module(corpus_dict: Dict[str, str], path: str) -> List[str]:
             return list(module_dict.values())
         else:
             return list(module_dict.keys())
+        
+def get_thought(thoughts: str) -> str:
+    return "" # thoughts
+
+def check_validation(corpus_dict: Dict[str, str], func_paths: List[str]) -> str:
+    try:
+        input_data = json.loads(func_paths)
+        if not isinstance(input_data, dict) or "func_paths" not in input_data:
+            return "Input must be a valid JSON sting with a 'func_paths' key"
+        paths_list = input_data["func_paths"]
+        if not isinstance(paths_list, list):
+            return "'func_paths' value must be a list"
+    except json.JSONDecodeError as _:
+        return "JSON failed to load. Please check the format."
+    
+    result = []
+    for path in paths_list:
+        if path not in corpus_dict:
+            result.append(path)
+    if len(result) > 0:
+        return f"It seems that {result} is not a valid function path, they are classes."
+    else:
+        return "All paths are valid!"
 
 def get_corpus(test_dir: str, dataset: str, instance_id: str) -> Dict[str, str]:
     if '-function_' in instance_id:
@@ -300,12 +348,15 @@ def list_function_directory(corpus_dict: Dict[str, str], file_path: str) -> List
                     module_level_function_paths_set.add(function_path)
         
         class_paths = list(class_paths_set)
-        
-        return (
-            f"Too many functions in {path}. Instead, we have a brief intro. \n"
-            f"This file contains modules: {str(class_paths)} \n"
-            f"This file also contains module-level functions: {str(module_level_function_paths_set)}"
-            )
+
+        if len(class_paths) > MAX_NUM * 2.5:
+            return f"{path} is a too large scope, we cannot list it here. Please give a smaller scope."
+        else:
+            return (
+                f"Too many functions in {path}. Instead, we have a brief intro. \n"
+                f"This file contains modules: {str(class_paths)} \n"
+                f"This file also contains module-level functions: {str(module_level_function_paths_set)}"
+                )
 
     if not result:
         result.append(f"No functions found for file path '{path}'.")

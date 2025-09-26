@@ -24,26 +24,20 @@ Follow these steps to localize the issue:
  - Identify main entry points triggering the issue in the description.
  - Prioritize the inital code candidates (preds): they are retrieved as root cause functions with high probability.
 
-## Step 2: Locate Referenced Classes
-- Accurately determine specific classes, starting from entry points in step 1
-    - Explore the repo to familiarize yourself with its structure.
-    - Analyze the described execution flow to identify specific classes or module-level functions being referenced.
+## Step 2: Explore Classes and Functions
+- Explore the repo to familiarize yourself with its structure. (TOOL: list_function_directory, get_file)
+- Explore classes and its functions, from the entry points in step 1 (LOOP) (TOOL: get_class)
+    - LOOP Start
+    - Operation in loop: Use get_class to get the context of one class related to the issue.
+    - LOOP ENDS: You have explored 4~5 classes or files and analyzed their functions.
 - Pay special attention to distinguishing between classes with similar names using context and described execution flow.
 
-## Step 3: Locate Functions in Classes
-- Analyze each class identified in step 2 to pinpoint critical functions
-    - Focus on functions that drive the described execution flow
-- Distinguish between core functionality and utility/helper functions using context and execution flow analysis
+## Step 3: Expand Your Thoughts
+- Assume the issue involves classes from Step 2 to trace additional bug paths.
+  - LOOP: For each class (4-5 total), invoke get_functions to analyze issue propagation within it.
+  - END LOOP: All Step 2 classes covered.
 
-## Step 4: Analyze and Reproduces the Problem
-- Clarify the Purpose of the Issue
-    - If expanding capabilities: Identify function which are feasible to incorporate new behavior, or fields.
-    - If addressing unexpected behavior: Focus on localizing functions containing potential bugs.
-- Reconstruct the execution flow
-    - Trace the calls from the entry point through the classes identified in Step 2.
-    - Identify potential breakpoints causing the issue. 
-
-## Step 5: Identify Target Functions for Modification
+## Step 4: Identify Target Functions for Modification
 - Extract those root-cause functions causing the issue
 - Determine which functions require changes to fully resolve the issue
     - You should adopt a systemic view: focus on minimal but impactful changes
@@ -52,6 +46,11 @@ Follow these steps to localize the issue:
 - Return a list of functions to be modified, rank them in:
     - Functions to be modified to solve the issue
     - Functions related to the issue
+
+## Step 5: Self-reflection
+- Check if your final results (exactly 10 functions) are all valid functions path:
+    - LOOP Start: use check_validation to check your all 10 functions. If not, reflect about your past thinking and correct your final answers.
+    - LOOP END: tool results shows that all functions are all valid (return empty list)
 
 ## Final Answer Format:
 Final answer should include exactly 10 functions, return a valid JSON string with key "updated_functions".
@@ -70,11 +69,12 @@ You have access to the following tools:
 - get_class Format: '{{"class_path": ''}}'
 - list_function_directory Format : '{{"file_path": ''}}'
 - get_file Format: '{{"target_function": ''}}'
+**Tool calls failure handing:** If a tool fails, follow its returned suggestions to get your results.
 
 Use the following format:
 
 Question: the input question you must answer
-Thought: You should always znalyze the question or observation comprehensively, and then device want you should do. Your thinking should be thorough and so it's fine if it's very long.
+Thought: Explain your thinking step-by-step. Your thinking should be thorough and so it's fine if it's very long.
 Action: the action to take, should be one of [{tool_names}]. You should only enter tool's name, e.g., get_file
 Action Input: the input to the action
 Observation: the result of the action
@@ -87,6 +87,19 @@ Begin!
 Question: {input}
 Thought: {agent_scratchpad}
 '''
+
+
+# - check_validation Format: '{{"func_paths": []}}'
+
+# ## Step 3: Analyze and Reproduces the Problem
+# - Clarify the Purpose of the Issue
+#     - If expanding capabilities: Identify function which are feasible to incorporate new behavior, or fields.
+#     - If addressing unexpected behavior: Focus on localizing functions containing potential bugs.
+# - Reconstruct the execution flow
+#     - Trace the calls from the entry point through the classes identified in Step 2.
+#     - Identify potential breakpoints causing the issue. 
+
+# - Use get_thought to conclude all the classes in Step 2, meanwhile analyze top-4 issue-related functions within each class. (TOOL: get_thought)
 
 # Important: do not afraid to check all possible classes and functions
 
