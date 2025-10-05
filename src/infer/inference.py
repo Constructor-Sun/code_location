@@ -3,12 +3,14 @@ os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 import re
 import gc
+import sys
 import json
-import signal
 import argparse
 import random
+import tempfile
 import numpy as np
 import torch
+import psutil
 from functools import partial
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_community.llms import VLLM
@@ -141,7 +143,8 @@ def save_conversation_history(agent):
     print(agent.memory.load_memory_variables({}))
     print("saving successful!")
 
-def execute(inference_model, target, query, preds, args):
+def execute(target, query, preds, args):
+    inference_model = load_inference_model(args.inference_model)
     corpus = get_corpus(args.test_dir, args.dataset, target)
 
     formatted_first_prompt = FIRST_PROMPT.format(query=query, preds=str(preds))
@@ -158,11 +161,11 @@ def execute(inference_model, target, query, preds, args):
         response_final_1 = json.loads(json_str)
         candidate_methods = response_final_1["updated_methods"]
         partition = partition_methods(candidate_methods)
-        # print("init answer: \n", json.dumps(candidate_methods, indent=4))
-        # for i, group in enumerate(partition):
-        #     print(f"\n第{i+1}组 ({len(group)}个方法):")
-        #     for method in group:
-        #         print(f"  {method}")
+        print("init answer: \n", json.dumps(candidate_methods, indent=4))
+        for i, group in enumerate(partition):
+            print(f"\n第{i+1}组 ({len(group)}个方法):")
+            for method in group:
+                print(f"  {method}")
         # exit()
         total = []
         for key, methods in enumerate(partition):
@@ -191,8 +194,35 @@ def execute(inference_model, target, query, preds, args):
     else:
         return "Not found!"
     
-def timeout_handler(signum, frame):
-    raise TimeoutError("Execution timed out after 5 minutes")
+def terminate_process_and_children(process):
+    """Forcefully terminate a process and its children, ensuring GPU cleanup."""
+    try:
+        parent = psutil.Process(process.pid)
+        # Terminate children first
+        for child in parent.children(recursive=True):
+            try:
+                child.terminate()  # Try SIGTERM first for graceful shutdown
+                child.wait(timeout=3)  # Wait briefly for termination
+            except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+                child.kill()  # Force SIGKILL if needed
+        # Terminate parent
+        parent.terminate()
+        parent.wait(timeout=3)
+    except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+        parent.kill()
+    finally:
+        process.wait() 
+
+def reset_cuda():
+    """Reset CUDA context and clear memory."""
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()  # Wait for all CUDA operations to complete
+            torch.cuda.empty_cache()  # Release memory back to CUDA pool
+            # Force reset of CUDA context (use cautiously)
+            torch.cuda.init()
+    except RuntimeError as e:
+        print(f"CUDA reset error: {e}")
 
 def main():
     set_global_seed()
@@ -208,11 +238,10 @@ def main():
     parser.add_argument("--saving", type=str, default="result.json")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
-    args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
-    args.target = os.path.join(args.test_dir, args.dataset + '-' + args.target)
     args.retrieval = os.path.join(args.test_dir, args.dataset + '-' + args.retrieval)
-    # args.target = os.path.join(args.test_dir, args.target)
-    # args.retrieval = os.path.join(args.test_dir, args.retrieval)
+    args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
+    # args.target = os.path.join(args.test_dir, args.dataset + '-' + args.target)
+    args.target = os.path.join(args.test_dir, args.target)
     print("target: ", args.target)
     print("retrieval: ", args.retrieval)
     print("to save in: ", args.saving)
@@ -228,19 +257,16 @@ def main():
         saving_dict = {}
 
     # execute
-    inference_model = load_inference_model(args.inference_model)
     with open(args.target, 'r', encoding='utf-8') as f:
         data = json.load(f)
         keys = list(data.keys())
         results = saving_dict
         for target in keys:
-            if target not in retrieval_dict:
-                continue
+            # if target not in retrieval_dict:
+            #     continue
             if target in results and results[target] is not None:
                 continue
-            # if target == "sympy__sympy-12236":
-            #     continue
-            # if target != "pytest-dev__pytest-7490":
+            # if target != "django__django-13158":
             #     continue
             query = retrieval_dict[target]["query"]
             preds = retrieval_dict[target]["preds"]
@@ -250,38 +276,53 @@ def main():
             answer = None
 
             while retries < max_retries and answer is None:
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(240)
-                try:
-                    answer = execute(inference_model, target, query, preds, args)
-                    signal.alarm(0)
-                    if retries > 0:
-                        print(f"Retry successful for {target}")
-                except TimeoutError:
-                    signal.alarm(0)
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    if retries < max_retries:
-                        print(f"Timeout: {target} execution exceeded 5 minutes, retrying...")
-                        retries += 1
-                    else:
-                        print(f"Timeout: {target} execution failed after {max_retries} retry")
-                        answer = None
-                except Exception as e:
-                    signal.alarm(0)
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    print(f"Other error occurred for {target}: {type(e).__name__}: {e}")
-                    if retries < max_retries:
-                        print(f"Retrying due to {type(e).__name__}...")
-                        retries += 1
-                    else:
-                        print(f"Failed after {max_retries} retries due to {type(e).__name__}")
-                        answer = None
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+                    temp_path = f.name
 
-            # saving immediately
+                params = {
+                    'target': target,
+                    'query': query,
+                    'preds': preds,
+                    'args': vars(args)
+                }
+                params_json = json.dumps(params, ensure_ascii=False)
+
+                process = subprocess.Popen(
+                    ['python', 'src/infer/inference_single.py', '--result-file', temp_path],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8'
+                )
+
+                try:
+                    # Communicate with the process, passing params and waiting for timeout
+                    stdout, stderr = process.communicate(input=params_json, timeout=60)
+                    if process.returncode == 0:
+                        print(stdout)
+                        print(stderr)
+                        with open(temp_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            print(f"Content of {temp_path}: {content}")
+                            f.seek(0)
+                            answer_data = json.load(f)
+                            if isinstance(answer_data, dict) and "error" in answer_data:
+                                print(f"Error from inference_single: {answer_data['error']}")
+                            else:
+                                answer = answer_data
+                    else:
+                        print(f"Subprocess failed with return code {process.returncode}")
+                        print(f"Stderr: {stderr}")
+                except subprocess.TimeoutExpired:
+                    print("Subprocess timed out after 240 seconds")
+                    print(process.stdout)
+                    print(process.stderr)
+                    terminate_process_and_children(process)
+                    reset_cuda()
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+
             results[target] = answer
             gc.collect()
             if torch.cuda.is_available():
