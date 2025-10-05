@@ -1,207 +1,166 @@
-SYSTEM_PROMPT = """
-You are an AI assistant specialized in identifying the "root cause functions" for GitHub issues. You are a detective, not a tourist.
-
-**Definition:** Root cause functions are the most fundamental ones whose flawed logic directly enables a reported error.
-Fixing it means:
-- Surgical modification that eliminates the symptom while preserving its original behavior;
-- Resolving the flaw at the point where the error originates in the code's execution path, rather than masking symptoms with downstream patches.
-
-**Final Results:** After investigation, your answer must contain:
-1. A detailed explanation of the GitHub issue, followed by ~3 distinct reasons supporting the identified root-cause functions.
-2. A list of exactly 10 candidate function names (NOT class names) that are directly consistent with the explanations provided.
-3. To ensure diversity of root causes, no more than 3 functions in the candidate list should reside in the same source file.
-"""
-
 FIRST_PROMPT = """
-Given the following GitHub problem description, your objective is to localize the specific functions that need modification or contain key information to resolve the issue. You have initial candidate functions for reference.
+Given the following GitHub problem description, your objective is to localize the specific methods or module-level functions that need modification or contain key information to resolve the issue. You have initial candidate functions for reference.
 - Issue Description: {query}
-- Initial Candidate Functions (preds): {preds}
+- Initial Candidates (preds): {preds}
 
 Follow these steps to localize the issue:
-## Step 1: Categorize Issue Description and Find Entry Points
+Step 1: Categorize Issue Description and Find Entry Points
  - Classify the issue description into the following categories:
     Problem description, error trace, code to reproduce the bug, and additional context.
  - Identify main entry points triggering the issue in the description.
- - Prioritize the inital code candidates (preds): they are retrieved as root cause functions with high probability.
+ - Prioritize the inital code candidates (preds): they are retrieved as root cause methods or module-level functions with high probability.
 
-## Step 2: Explore Classes and Functions
+Step 2: Explore Classes and methods
 - Explore the repo to familiarize yourself with its structure. (TOOL: list_function_directory, get_file)
-- Explore classes and its functions, from the entry points in step 1 (LOOP) (TOOL: get_class)
+- Explore classes and its methods, from the entry points in step 1 (LOOP) (TOOL: get_class)
     - LOOP Start
     - Operation in loop: Use get_class to get the context of one class related to the issue.
-    - LOOP ENDS: You have explored 4~5 classes or files and analyzed their functions.
+    - LOOP ENDS: You have explored 4~5 classes or files and analyzed their methods.
 - Pay special attention to distinguishing between classes with similar names using context and described execution flow.
 
-## Step 3: Expand Your Thoughts
+Step 3: Expand Your Thoughts
 - Assume the issue involves classes from Step 2 to trace additional bug paths.
-  - LOOP: For each class (4-5 total), invoke get_functions (3~4 functions within this class) to analyze issue propagation within it.
+  - LOOP: For each class (4-5 total), invoke get_functions (3~4 methods within this class) to analyze issue propagation within it.
   - END LOOP: All Step 2 classes covered.
 
-## Step 4: Identify Target Functions for Modification
-- Extract those root-cause functions causing the issue, normally it covers 1~2 functions since it's about functional chain rather than architecture.
-- Determine which functions require changes to fully resolve the issue
-    - Try consider functions in different classes in Step 2, with each about 3 steps
+Step 4: Identify Target methods for Modification
+- Determine those methods or module-level functions that require changes to fully resolve the issue
+    - Try consider methods in different classes in Step 2, with each about 3 steps
     - You should not list too much function within single class since it is not a architecture issue
 
-## Step 5: Self-reflection
-- Check if your final results (exactly 20 functions) are all valid functions path:
-    - LOOP Start: use check_validation to check all your results. If not, reflect about your past thinking and correct your final answers.
-    - LOOP END: tool results shows that all functions are all valid (return empty list)
-
-## Final Answer Format:
-Final answer should include exactly 20 functions, return a valid JSON string with key "updated_functions".
-Warning: You should not give class names. Try give module-level function names or in-class methods.
-{{
-    "updated_functions": ["Must", "be", "function", "names", "not", "class", "names"],
-}}
-"""
-
-REACT_PROMPT = '''Answer the following questions as best you can. 
-You have access to the following tools:
-{tools}
-**Tool calls Input**:
+## Tool calls Input**:
 - get_call_graph Format: '{{"target_function": ''}}'
 - get_functions Format: '{{"func_paths": []}}'
 - get_class Format: '{{"class_path": ''}}'
 - list_function_directory Format : '{{"file_path": ''}}'
 - get_file Format: '{{"target_function": ''}}'
-**Tool calls failure handing:** If a tool fails, follow its returned suggestions to get your results.
 
+## Final Answer Format:
+- You should return a valid JSON string with key "updated_methods", whose value should include exactly 10 methods or module-level functions
+- Ranked in order of likelihood that you consider it to be the root cause.
+- Final Answer:{{
+    "updated_methods": ["Must", "be", "function", "names", "not", "class", "names"],
+}}
+"""
+
+SECOND_PROMPT = """
+IMPORTANT DEFINITIONS:
+- Callee: A function/method invoked BY the candidate (downstream/outgoing calls).
+- Caller: A function/method that invokes the candidate (upstream/incoming calls). DO NOT analyze or include callers EVER.
+
+GOAL: Identify methods to modify by following the CALL CHAIN DOWNSTREAM from candidates (callees, then callees of callees, etc.). Prioritize methods in these files: {file}. You MAY extend to functions in other files ONLY if they are directly called by candidates or their callees (proven via tool traces). Always aim for at least 4 methods; if fewer found, select the best available and note in reasoning.
+
+Given the following GitHub problem description, your objective is to use initial candidates to fix this issue.
+- Issue Description: {query}
+- Candidates: {candidates}
+
+Follow these steps, ensuring DOWNSTREAM-ONLY (callee) analysis. Never go upstream to callers.
+
+Step 1: Downstream Dependency Analysis (Callee-Only Chain)
+- Start with Level 0: The candidates themselves.
+- For each at current level, analyze ONLY WHAT IT CALLS (callees):
+  - Direct function calls within the methods.
+  - Class instantiations and method invocations.
+  - Return types and their dependencies (if callable).
+- Use tools to trace: Call get_functions or get_file to verify callees and their files.
+- Build a chain level-by-level (max depth 3 to avoid loops):
+  - Level 1: Direct callees of candidates.
+  - Level 2: Callees of Level 1.
+  - Etc.
+- Discard ANYTHING that traces back to callers. Example: If A calls B (B is callee of A), do NOT include functions that call A.
+- If a callee is outside {file}, include it ONLY if tool-verified as in the chain.
+- Reasoning Trace: List the chain like: "Level 0: candidate1 -> Level 1: calleeX (in fileY) -> Level 2: calleeZ (in fileW)"
+- Termination: Stop at depth 3 or if no new callees. If chain is short (<4 total methods), reuse from earlier levels or note "limited chain" but still output 4 (e.g., duplicates if needed).
+
+Step 2: Identify Feasible Methods to Be Modified
+- From the callee chain, select the most appropriate methods for modification (at least 4).
+- Prioritize those in {file}; include external only if chain-linked.
+- All must be methods or module-level functions (complete paths). Never return class names.
+- Validation: For each selected, confirm it's a callee (not caller) via chain trace. If not, discard and replace.
+
+Step 3: Anti-Loop and Debug Check
+- If stuck (e.g., no callees in {file}), broaden to chain-extended but stop after 2 tool calls max per level.
+- Verify: No callers included? Chain depth <=3? At least 4 outputs?
+- Example Correct Chain: Candidate: funcA in file1.py calls funcB in file1.py, which calls funcC in file2.py. Methods: ["file1.py:funcA", "file1.py:funcB", "file2.py:funcC", "file1.py:someOtherCallee"]
+- Example Incorrect (DO NOT): Include funcD that calls funcA (that's a caller).
+
+## Tool Calls Input:
+- get_functions Format: '{{"func_paths": []}}'
+- get_class Format: '{{"class_path": ''}}'
+- get_file Format: '{{"target_function": ''}}'
+- Use tools sparingly to verify chains; batch if possible (e.g., multiple func_paths in one call).
+
+## Final Answer Format:
+- Return ONLY a valid JSON string with "main_idea" and "methods_tobe_modified".
+- "methods_tobe_modified" MUST include at least 4 methods with complete paths, from the callee chain ONLY.
+- Final Answer:{{
+    "main_idea": "",
+    "methods_tobe_modified": []
+}}
+"""
+
+# SECOND_PROMPT = """
+# IMPORTANT CONSTRAINT: All analysis and modifications MUST be limited to methods or module-level functions within these files ONLY: {file}. You MUST NOT reference, analyze, or suggest ANY methods from other files. If a dependency leads outside {file}, ignore it and focus solely on elements within {file}.
+
+# Given the following GitHub problem description, your objective is to use initial candidates to fix this issue.
+# - Issue Description: {query}
+# - Candidates: {candidates}
+
+# Now, follow these steps to help you fix the issue, ensuring EVERY STEP adheres to the constraint above (methods/functions ONLY from {file}):
+
+# Step 1: Downstream Dependency Analysis (Limited to {file})
+# - For each candidate function, analyze WHAT IT CALLS (callee analysis), but ONLY trace calls to functions/methods that exist within {file}.
+# - Trace outgoing calls: functions/methods invoked by the candidates, but discard any that are not in {file}.
+#     - Direct function calls within candidate methods (only if callee is in {file})
+#     - Class instantiations and method invocations (only if class/method is defined in {file})  
+#     - Return types and their dependencies (only if types/dependencies are handled in {file})
+# - DO NOT analyze who calls the candidates (caller analysis). If no valid callees in {file}, note that and proceed.
+
+# Step 2: Identify Feasible Methods to Be Modified
+# - Assume the root cause resides within the same files as the original candidates ({file}), then find the most appropriate modification methods.
+# - All methods or module-level functions MUST be in these files ONLY: {file}. If a potential method is not in {file}, discard it immediately and select an alternative from {file}.
+# - You MUST return methods or module-level functions ONLY. Never return a class name, even if original candidates include class names.
+# - Aim for at least 4 methods, all with complete paths, exclusively from {file}.
+
+# Step 3: Validation Check
+# - Review your identified methods: For each one, confirm it is defined in {file}. If ANY method is from outside {file}, replace it with a valid one from {file} or explain why no alternative exists (but still provide at least 4 valid ones).
+
+# Example of Correct Output:
+# Suppose {file} = ['file1.py', 'file2.py'], and methods must be from there.
+# Correct "methods_tobe_modified": ["file1.py:func_a", "file1.py:func_b", "file2.py:method_c", "file2.py:func_d"]
+# Incorrect (do NOT do this): ["external.py:func_x"] - this would violate the rule.
+
+# ## Tool Calls Input:
+# - get_functions Format: '{{"func_paths": []}}'
+# - get_class Format: '{{"class_path": ''}}'
+# - get_file Format: '{{"target_function": ''}}'
+
+# ## Final Answer Format:
+# - You should only return a valid JSON string with keys "main_idea" and "methods_tobe_modified".
+# - "methods_tobe_modified" MUST include at least 4 methods with complete paths, ALL of them from {file} ONLY. Double-check this before outputting.
+# - Final Answer:{{
+#     "main_idea": "",
+#     "methods_tobe_modified": []
+# }}
+# """
+
+REACT_PROMPT = '''Answer the following questions as best you can. 
+You have access to the following tools:
+{tools}
+**Tool calls failure handing:** If a tool fails, follow its returned suggestions to get your results.
 Use the following format:
 
 Question: the input question you must answer
-Thought: Explain your thinking step-by-step. Your thinking should be thorough and so it's fine if it's very long.
+Thought: Explain your thinking step-by-step. You're encouraged to give long thought.
 Action: the action to take, should be one of [{tool_names}]. You should only enter tool's name, e.g., get_file
-Action Input: the input to the action
+Action Input: the input to the action, e.g., '{{"func_paths": []}}'
 Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
+... (this Thought/Action/Action Input/Observation can repeat N times before you give your final answer)
+Final Answer: I now know the final answer... The final answer is listed in the JSON string: ... 
+(After you give this JSON string, you must STOP. You should never repeat the same JSON string.)
 
 Begin!
 
 Question: {input}
 Thought: {agent_scratchpad}
 '''
-
-
-# - check_validation Format: '{{"func_paths": []}}'
-
-# ## Step 3: Analyze and Reproduces the Problem
-# - Clarify the Purpose of the Issue
-#     - If expanding capabilities: Identify function which are feasible to incorporate new behavior, or fields.
-#     - If addressing unexpected behavior: Focus on localizing functions containing potential bugs.
-# - Reconstruct the execution flow
-#     - Trace the calls from the entry point through the classes identified in Step 2.
-#     - Identify potential breakpoints causing the issue. 
-
-# - Use get_thought to conclude all the classes in Step 2, meanwhile analyze top-4 issue-related functions within each class. (TOOL: get_thought)
-
-# Important: do not afraid to check all possible classes and functions
-
-# ## Step 5: Locate Only Functions for Modification
-# - Locate specific functions requiring changes or containing critical information for resolving the issue.
-# - Consider upstream and downstream dependencies that may affect or be affected by the issue.
-# - If applicable, identify where to introduce new fields, functions, or variables.
-# - Think Thoroughly: List multiple potential solutions and consider edge cases that could impact the resolution.
-
-# Important: Keep the reconstructed flow focused on the problem, avoiding irrelevant details.
-
-## Step 5: Self-Reflection
-# - Review the call graph of identified functions. Investigate if any functions within the graph are more fundamental to the issue.
-#   - If call graph analysis is unavailable, examine the functions called by the initially identified functions directly.
-# - You are highly suggested to examine the complete class and file containing the located functions to determine if more fundamental classes or functions exist.
-# - Re-evaluate the currently identified functions and update them if more fundamental root causes are found.
-
-
-## Step 3: Expand Referenced Modules and Functions
-# - Summarize every referenced modules and functions in your THOUGHT (don't worry about lengths and tokens):
-#     - For modules you must include: 
-#         - parent-child between packages/submodules
-#         - Import/export links between modules
-#         - Interactions via shared interfaces/base classes
-#     - For functions you must include:
-#         - caller-callee relationships
-#         - Parameter dependencies (e.g., passed objects/classes)
-#         - Inheritance and interface chains
-
-
-# REACT_PROMPT = '''Answer the following questions as best you can. 
-
-# You have access to the following tools:
-# {tools}
-
-# Use the following format:
-
-# Question: the input question you must answer
-# Thought: you should always think about what to do
-# Action: the action to take, should be one of [{tool_names}]. You should only enter tool's name, e.g., 'get_file'
-# Action Input: the input to the action
-# Observation: the result of the action
-# ... (this Thought/Action/Action Input/Observation can repeat N times)
-# Thought: I now know the final answer
-# Final Answer: the final answer to the original input question
-
-# Begin!
-
-# Question: {input}
-# Thought:{agent_scratchpad}'''
-
-# **Tool calls hint**:
-# - "get_call_graph" Format: '{{"target_function": ''}}'
-# - "get_functions" Format: '{{"func_paths": []}}'
-# - "list_function_directory" Format : '{{"file_path": ''}}'
-# - "get_file"Format: '{{"target_function": ''}}'
-
-# FIRST_PROMPT = """
-# Your goal is to iteratively evaluate and refine a list of candidate functions (`preds`) to identify the most likely root cause functions for a GitHub issue.
-
-# **Initial Input:**
-# - Issue Description: {query}
-# - Initial Candidate List (preds): {preds}
-
-# Your Investigation Process (FOCUSED EXPLORATION):
-# 1. Initial Triage (First 3~4 Steps): Quickly use get_call_graph to get a high-level overview of the problem area. The goal is to avoid starting completely blind, not to map everything.
-# 2. Investigation Loop:
-#     a. Form/Update Hypotheses: Based on all current evidence, maintain 1-2 active hypotheses. Continuously refine them or replace them with new, more promising ones.
-#     b. Plan Next Critical Move: Ask: "What is the single most important question I can answer that would either disprove my current top hypothesis or point to a better one?" Your goal is to challenge your assumptions, not just confirm them.
-#     c. Call Tool: Call the tool that can answer that critical question. You MUST provide hypothesis and reasoning parameters.
-#     d. Analyze Evidence Impartially: Update your understanding. If evidence strongly contradicts your hypothesis, discard it immediately. Prioritize clues that open new, fruitful paths over those that merely reinforce existing beliefs.
-#     e. Apply Exploration Constraints:
-#         - The "Three-Strike" Rule: If you have called tools on 3 or more functions within the same file and none have yielded strong evidence pointing to a root cause, you MUST mark that file as "low priority" and pivot to explore a different file or module for your next iteration.
-#         - Rationale: Root causes are rarely confined to a single file in this way. This prevents wasted effort.
-#     f. Iterate or Conclude:
-#         - CONCLUDE only if the evidence for root causes are overwhelming and unambiguous.
-#         - HARD STOP after 20 iterations to respect token limits. Output your most plausible findings.
-
-# **List Management Rule:**
-# - Keep the `preds` list focused to 10 items. 
-# - When you discover a new, more relevant candidate, **ADD it** and simultaneously **REMOVE the current LEAST likely candidate**. 
-# - Always **RE-RANK** the list by likelihood.
-
-# **Tool calls hint with Hypothesis & Reasoning**:
-# - You are STRONGLY encouraged to use "get_call_graph" to guide your searching. Remember: "target_function" should be a function path. Format: '{{"hypothesis": '', "reasoning": '', "target_function": ''}}'
-# - You can use "get_functions" to get candidate functions. It is recommended to request no more than 3-5 function bodies at a time to avoid overwhelming the context window. Format: '{{"hypothesis": '', "reasoning": '', "func_paths": []}}'
-# - You can LESS encouraged use "list_function_directory" to list all the functions within a file or directory. This is only suggested when get_call_graph fails to reveal call graph. Format : '{{"hypothesis": '', "reasoning": '', "file_path": ''}}'
-# - You are LESS encouraged to use "get_file", as a file can be very large. Use only when necessary. Format: '{{"hypothesis": '', "reasoning": '', "target_function": ''}}'
-
-# **Initial Assessment & Final Conclusion Format**
-# - **When:** (a) For the **initial assessment** before any tool calls. (b) When you are ready to **give the final answer**.
-# {{
-#     "reasons": "A detailed explanation of changes (e.g., 'Based on names, prioritized issue-related files. After reading FunctionA, it is much more fundamental to the issue. Added ModuleB.FunctionA and removed the least relevant candidate')",
-#     "updated_andidates": ["Must", "be", "function", "names", "not", "class", "names"],
-#     "next_step": "continue_investigation" | "final_answer"
-# }}
-
-# **Begin now with your INITIAL ASSESSMENT.**
-# """
-
-# REFLECTION_PROMPT = """你是一个代码分析专家，负责对对话过程进行反思和提供改进建议。
-
-# 请分析当前的对话过程，包括：
-# 1. 对话的整体进展和当前状态
-# 2. 已经采取的行动和使用的工具
-# 3. 可能存在的问题或需要改进的地方
-# 4. 下一步的建议行动方向
-
-# 请提供具体、可操作的反馈和建议，帮助改进后续的对话质量。"""

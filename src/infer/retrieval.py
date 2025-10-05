@@ -1,6 +1,6 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 import gc
 import json
 import argparse
@@ -101,6 +101,38 @@ def retrieve(args):
 
     return query, preds
 
+def retrieve_batch(args):
+    with open(args.target, 'r', encoding='utf-8') as f:
+        tokenizer, retrieval_model = load_model(args.retrieval_model)
+        data = json.load(f)
+        keys = list(data.keys())
+        result = {}
+        for key in keys:
+            target = args.dataset + '-function_' + key
+            query = get_query(os.path.join(args.test_dir, target, "queries.jsonl"))
+            project_path = os.path.join(args.embed_dir, target + ".pt")
+            if not os.path.exists(project_path):
+                continue
+            labels = get_ori_label(os.path.join(args.test_dir, target))
+            labels_index, project_embeddings = convert_to_index(project_path, labels)
+            try:
+                top_nodes_dic, p = get_top_nodes(tokenizer, retrieval_model, query, 
+                                                project_path, 
+                                                top_k=args.top_k)
+                preds = get_labels(project_embeddings, p)
+                result[key] = {
+                    "query": query,
+                    "preds": preds
+                }
+            finally:
+                torch.cuda.empty_cache()
+        with open(args.retrieval, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=4)
+        retrieval_model.to("cpu")
+        del retrieval_model
+        gc.collect()
+        torch.cuda.empty_cache()
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--embed_dir", type=str, default="test_index")
@@ -108,27 +140,27 @@ def main():
     parser.add_argument("--dataset", type=str, default="swe-bench-lite") # swe-bench-lite
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--top_k", type=int, default=10)
-    parser.add_argument("--target", type=str, default="matplotlib__matplotlib-24334")
+    parser.add_argument("--target", type=str, default="sympy__sympy-23262")
     args = parser.parse_args()
 
     args.target = args.dataset + '-function_' + args.target
     query = get_query(os.path.join(args.test_dir, args.target, "queries.jsonl"))
     project_path = os.path.join(args.embed_dir, args.target + ".pt")
     labels = get_ori_label(os.path.join(args.test_dir, args.target))
-    # labels_index, project_embeddings = convert_to_index(project_path, labels)
-    # tokenizer, retrieval_model = load_model(args.retrieval_model)
-    # top_nodes_dic, p = get_top_nodes(tokenizer, retrieval_model, query, 
-    #                                  project_path, 
-    #                                  top_k=args.top_k)
-    # preds = get_labels(project_embeddings, p)
+    labels_index, project_embeddings = convert_to_index(project_path, labels)
+    tokenizer, retrieval_model = load_model(args.retrieval_model)
+    top_nodes_dic, p = get_top_nodes(tokenizer, retrieval_model, query, 
+                                     project_path, 
+                                     top_k=args.top_k)
+    preds = get_labels(project_embeddings, p)
     print("query: ", query)
     print("labels: ", labels)
-    # print("label index: ", labels_index)
-    # print()
-    # print("top_nodes_dic: ", top_nodes_dic)
-    # print("preds: ", preds)
-    # print()
-    # print("labels not predicted in retrieval_model 1: ", list(set(labels_index) - set(top_nodes_dic.keys())))
+    print("label index: ", labels_index)
+    print()
+    print("top_nodes_dic: ", top_nodes_dic)
+    print("preds: ", preds)
+    print()
+    print("labels not predicted in retrieval_model 1: ", list(set(labels_index) - set(top_nodes_dic.keys())))
 
 if __name__ == "__main__":
     main()

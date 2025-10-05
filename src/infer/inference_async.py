@@ -1,14 +1,15 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 import re
 import gc
 import json
-import signal
 import argparse
 import random
 import numpy as np
 import torch
+import asyncio
+from concurrent.futures import ProcessPoolExecutor, TimeoutError
 from functools import partial
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_community.llms import VLLM
@@ -46,9 +47,7 @@ def load_inference_model(model_name):
         tensor_parallel_size=2,
         vllm_kwargs={
             "max_model_len": 80960*2,
-            "gpu_memory_utilization": 0.9,
-            "enable_chunked_prefill": True,
-            "max_num_batched_tokens": 65536
+            "gpu_memory_utilization": 0.9
         }
     )
     return llm
@@ -111,7 +110,7 @@ def create_agent(llm, corpus, target, args):
         tools=tools_1,
         memory=memory,
         max_iterations=None,
-        # verbose=True,
+        verbose=True,
         handle_parsing_errors=True,
         return_intermediate_steps=True
     )
@@ -126,7 +125,7 @@ def create_agent(llm, corpus, target, args):
         tools=tools_2,
         memory=memory,
         max_iterations=None,
-        # verbose=True,
+        verbose=True,
         handle_parsing_errors=True,
         return_intermediate_steps=True
     )
@@ -141,60 +140,88 @@ def save_conversation_history(agent):
     print(agent.memory.load_memory_variables({}))
     print("saving successful!")
 
-def execute(inference_model, target, query, preds, args):
+# def execute(inference_model, target, query, preds, args):
+#     corpus = get_corpus(args.test_dir, args.dataset, target)
+
+#     formatted_first_prompt = FIRST_PROMPT.format(query=query, preds=str(preds))
+#     agent = create_agent(inference_model, corpus, target, args)
+
+#     # Step 1
+#     step_input = {"input": formatted_first_prompt, "chat_history": []}
+#     response_1 = agent["first"].invoke(step_input)
+
+#     # Step 2
+#     json_match = re.search(r'\{.*\}', response_1["output"], re.DOTALL)
+#     if json_match:
+#         json_str = json_match.group()
+#         response_final_1 = json.loads(json_str)
+#         candidate_methods = response_final_1["updated_methods"]
+#         partition = partition_methods(candidate_methods)
+#         total = []
+#         for key, methods in enumerate(partition):
+#             files = set([_split_path(path)[0] for path in methods])
+#             files = ", ".join(list(files))
+#             formatted_second_prompt = SECOND_PROMPT.format(query=query, candidates=methods, file=files)
+#             step_input = {"input": formatted_second_prompt, "chat_history": []}
+#             response_2 = agent["second"].invoke(step_input)
+#             json_match = re.search(r'\{.*\}', response_2["output"], re.DOTALL)
+#             if json_match:
+#                 json_str = json_match.group()
+#                 response_final_1 = json.loads(json_str)
+#                 current = response_final_1["methods_tobe_modified"]
+#                 total.extend(current)
+
+#         # print("init answer::")
+#         # for i, group in enumerate(partition):
+#         #     print(f"\n第{i+1}组 ({len(group)}个方法):")
+#         #     for method in group:
+#         #         print(f"  {method}")
+#         print("final answer: \n", json.dumps(total, indent=4))
+#         return total
+#     else:
+#         return "Not found!"
+
+async def execute(inference_model, target, query, preds, args, timeout=120):
     corpus = get_corpus(args.test_dir, args.dataset, target)
 
     formatted_first_prompt = FIRST_PROMPT.format(query=query, preds=str(preds))
     agent = create_agent(inference_model, corpus, target, args)
 
-    # Step 1
-    step_input = {"input": formatted_first_prompt, "chat_history": []}
-    response_1 = agent["first"].invoke(step_input)
+    try:
+        # Step 1: Execute with timeout
+        step_input = {"input": formatted_first_prompt, "chat_history": []}
+        response_1 = await asyncio.wait_for(agent["first"].ainvoke(step_input), timeout=timeout)
 
-    # Step 2
-    json_match = re.search(r'\{.*\}', response_1["output"], re.DOTALL)
-    if json_match:
-        json_str = json_match.group()
-        response_final_1 = json.loads(json_str)
-        candidate_methods = response_final_1["updated_methods"]
-        partition = partition_methods(candidate_methods)
-        # print("init answer: \n", json.dumps(candidate_methods, indent=4))
-        # for i, group in enumerate(partition):
-        #     print(f"\n第{i+1}组 ({len(group)}个方法):")
-        #     for method in group:
-        #         print(f"  {method}")
-        # exit()
-        total = []
-        for key, methods in enumerate(partition):
-            files = set([_split_path(path)[0] for path in methods])
-            files = ", ".join(list(files))
-            formatted_second_prompt = SECOND_PROMPT.format(query=query, candidates=methods, file=files)
-            step_input = {"input": formatted_second_prompt, "chat_history": []}
-            response_2 = agent["second"].invoke(step_input)
-            # print("Files:", files)
-            # print(f"updated_methods_{key}: ", response_2["output"])
-            json_match = re.search(r'\{.*\}', response_2["output"], re.DOTALL)
-            if json_match:
-                json_str = json_match.group()
-                response_final_1 = json.loads(json_str)
-                current = response_final_1["methods_tobe_modified"]
-                total.extend(current)
+        # Step 2
+        json_match = re.search(r'\{.*\}', response_1["output"], re.DOTALL)
+        if json_match:
+            json_str = json_match.group()
+            response_final_1 = json.loads(json_str)
+            candidate_methods = response_final_1["updated_methods"]
+            partition = partition_methods(candidate_methods)
+            total = []
+            for key, methods in enumerate(partition):
+                files = set([_split_path(path)[0] for path in methods])
+                files = ", ".join(list(files))
+                formatted_second_prompt = SECOND_PROMPT.format(query=query, candidates=methods, file=files)
+                step_input = {"input": formatted_second_prompt, "chat_history": []}
+                response_2 = await asyncio.wait_for(agent["second"].ainvoke(step_input), timeout=timeout)
+                json_match = re.search(r'\{.*\}', response_2["output"], re.DOTALL)
+                if json_match:
+                    json_str = json_match.group()
+                    response_final_1 = json.loads(json_str)
+                    current = response_final_1["methods_tobe_modified"]
+                    total.extend(current)
 
-        print("original preds: ", json.dumps(preds, indent=4))
-        print("init answer: \n", json.dumps(candidate_methods, indent=4))
-        for i, group in enumerate(partition):
-            print(f"\n第{i+1}组 ({len(group)}个方法):")
-            for method in group:
-                print(f"  {method}")
-        print("final answer: \n", json.dumps(total, indent=4))
-        return total
-    else:
-        return "Not found!"
-    
-def timeout_handler(signum, frame):
-    raise TimeoutError("Execution timed out after 5 minutes")
+            print("final answer: \n", json.dumps(total, indent=4))
+            return total
+        else:
+            return "Not found!"
+    except asyncio.TimeoutError:
+        print(f"Timeout occurred for target {target} after {timeout} seconds")
+        return "Timeout"
 
-def main():
+async def main():
     set_global_seed()
     parser = argparse.ArgumentParser()
     parser.add_argument("--embed_dir", type=str, default="test_index")
@@ -203,23 +230,17 @@ def main():
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--inference_model", type=str, default="Qwen/Qwen3-Coder-30B-A3B-Instruct")
     parser.add_argument("--top_k", type=int, default=10)
-    parser.add_argument("--target", type=str, default="instances.json")
-    parser.add_argument("--retrieval", type=str, default="embed32-retrieval.json")
+    parser.add_argument("--target", type=str, default="datasets/instances.json")
+    parser.add_argument("--retrieval", type=str, default="retrieval.json")
     parser.add_argument("--saving", type=str, default="result.json")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
     args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
-    args.target = os.path.join(args.test_dir, args.dataset + '-' + args.target)
-    args.retrieval = os.path.join(args.test_dir, args.dataset + '-' + args.retrieval)
-    # args.target = os.path.join(args.test_dir, args.target)
-    # args.retrieval = os.path.join(args.test_dir, args.retrieval)
-    print("target: ", args.target)
-    print("retrieval: ", args.retrieval)
-    print("to save in: ", args.saving)
     
-    if not os.path.exists(args.retrieval):
+    retrieval_path = os.path.join(args.test_dir, args.retrieval)
+    if not os.path.exists(retrieval_path):
         retrieve_batch(args)
-    with open(args.retrieval, 'r', encoding='utf-8') as f:
+    with open(retrieval_path, 'r', encoding='utf-8') as f:
         retrieval_dict = json.load(f)
     try:
         with open(args.saving, 'r', encoding='utf-8') as f:
@@ -234,62 +255,38 @@ def main():
         keys = list(data.keys())
         results = saving_dict
         for target in keys:
-            if target not in retrieval_dict:
+            if results[target] != "Timeout":
                 continue
-            if target in results and results[target] is not None:
-                continue
-            # if target == "sympy__sympy-12236":
-            #     continue
-            # if target != "pytest-dev__pytest-7490":
-            #     continue
             query = retrieval_dict[target]["query"]
             preds = retrieval_dict[target]["preds"]
 
             max_retries = 1
-            retries = 0
+            retries = 1
             answer = None
 
-            while retries < max_retries and answer is None:
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(240)
+            while retries <= max_retries:
                 try:
-                    answer = execute(inference_model, target, query, preds, args)
-                    signal.alarm(0)
-                    if retries > 0:
-                        print(f"Retry successful for {target}")
-                except TimeoutError:
-                    signal.alarm(0)
+                    answer = await execute(inference_model, target, query, preds, args)
+                    break
+                except asyncio.TimeoutError:
+                    print(f"Timeout occurred for target {target} on attempt {retries + 1}")
+                    retries += 1
+                    timeout += 100
+                    torch.cuda.empty_cache()
                     gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    if retries < max_retries:
-                        print(f"Timeout: {target} execution exceeded 5 minutes, retrying...")
-                        retries += 1
-                    else:
-                        print(f"Timeout: {target} execution failed after {max_retries} retry")
-                        answer = None
+                    await asyncio.sleep(1)
                 except Exception as e:
-                    signal.alarm(0)
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    print(f"Other error occurred for {target}: {type(e).__name__}: {e}")
-                    if retries < max_retries:
-                        print(f"Retrying due to {type(e).__name__}...")
-                        retries += 1
-                    else:
-                        print(f"Failed after {max_retries} retries due to {type(e).__name__}")
-                        answer = None
+                    print(f"Error occurred for target {target} on attempt {retries + 1}: {str(e)}")
+                    retries += 1
 
             # saving immediately
-            results[target] = answer
+            results[target] = answer if answer is not None else "Timeout"
+            torch.cuda.empty_cache()
             gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             with open(args.saving, 'w', encoding='utf-8') as save_file:
                 json.dump(results, save_file, indent=2, ensure_ascii=False)
             
             print(f"Saved result for {target}")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

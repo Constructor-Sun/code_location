@@ -1,37 +1,32 @@
-import ast
 import os
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+# import ray
+# ray.init(
+#     num_cpus=10,
+#     num_gpus=2,  # 明确告诉Ray有2个GPU可用
+#     include_dashboard=False,
+#     ignore_reinit_error=True
+# )
+import re
+import gc
+import json
+import argparse
+import random
+import numpy as np
+import torch
+from concurrent.futures import ProcessPoolExecutor, TimeoutError
+from functools import partial
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain_community.llms import VLLM
+from langchain.memory import ConversationBufferMemory
+from langchain.tools import StructuredTool
+from langchain_core.prompts import PromptTemplate
+from langchain.prompts import PromptTemplate
 
-def extract_calls(file_path, target_func=None):
-    """提取Python文件中的函数调用"""
-    with open(file_path, 'r') as f:
-        tree = ast.parse(f.read())
-    
-    calls = []
-    
-    class CallVisitor(ast.NodeVisitor):
-        def visit_Call(self, node):
-            if isinstance(node.func, ast.Name):
-                func_name = node.func.id
-                if target_func is None or func_name == target_func:
-                    calls.append({
-                        'function': func_name,
-                        'line': node.lineno,
-                        'caller': self.current_function
-                    })
-            self.generic_visit(node)
-    
-    visitor = CallVisitor()
-    visitor.current_function = None
-    
-    # 先遍历找到所有函数定义
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef):
-            visitor.current_function = node.name
-            visitor.visit(node)
-    
-    return calls
-
-# 使用示例
-calls = extract_calls('swe-bench-lite/pytest-dev__pytest-7220/src/_pytest/_code/code.py', 'filter_traceback')
-for call in calls:
-    print(f"Function {call['caller']} calls {call['function']} at line {call['line']}")
+llm = VLLM(
+    model="Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    tensor_parallel_size=2,
+    gpu_memory_utilization=0.8
+)
+print("Model loaded successfully")

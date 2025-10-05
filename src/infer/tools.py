@@ -3,8 +3,11 @@ import ast
 import json
 import subprocess
 import difflib
-from typing import Dict, List, Union
+from typing import Dict, List
 from pydantic import BaseModel, Field
+import difflib
+import numpy as np
+from sklearn.cluster import AgglomerativeClustering
 
 MAX_NUM = 20
 
@@ -315,6 +318,25 @@ def get_file(corpus_dict: Dict[str, str], instance_path: str, file_path: str) ->
         # return "Too many functions in this file. Here this tool will give you a list of function names contained in this file. If you wanna check more details about a few of them, please call 'get_functions'. " + str(result.keys())
     return ', '.join(result.values()) + '\n' + import_result
 
+def get_full_file(corpus_dict: Dict[str, str], instance_path: str, file_path: str) -> List[str]:
+    try:
+        # Parse the JSON string, expecting an object with 'file_path' key
+        input_data = json.loads(file_path)
+        if not isinstance(input_data, dict) or "file_path" not in input_data:
+            return "Input must be a valid JSON sting with a 'file_path' key"
+        path = input_data["file_path"]
+        if not isinstance(path, str):
+            return "'file_path' value must be a string."
+    except json.JSONDecodeError as _:
+        return "JSON failed to load. Please check the format."
+
+    try: 
+        with open(os.path.join(instance_path, path), 'r', encoding='utf-8') as file:
+            content = file.read()
+        return content
+    except Exception as _:
+        return f"No functions found for file path '{os.path.join(instance_path, path)}'. Please check if the file path exists in the corpus."
+    
 def list_function_directory(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
     try:
         input_data = json.loads(file_path)
@@ -387,83 +409,6 @@ def transform_graph(call_graph):
     }
     
     return result
-
-# def _get_call_graph(instance_path: str, scopes: List[str], target_function: str) -> Dict[str, str]:
-#     targets = [os.path.join(instance_path, scope) for scope in scopes]
-#     modified_targets = []
-#     for target in targets:
-#         if target.endswith('.py'):
-#             if '/' in target:
-#                 dir_part = target.rsplit('/', 1)[0]
-#                 modified_targets.append(f"{dir_part}/*.py")
-#             else:
-#                 modified_targets.append("*.py")
-#         else:
-#             target = target if target.endswith('/') else target + '/'
-#             modified_targets.append(target + '*.py')
-#     modified_targets = " ".join(modified_targets)
-#     code2flow_cmd = f"code2flow {modified_targets} --target-function {target_function} --upstream-depth=1 --downstream-depth=5 --output tmp/call_graph.json"
-#     print("code2flow_cmd: ", code2flow_cmd)
-
-#     try:
-#         # TODO: sometimes it cannot find the existing node, strange
-#         _ = subprocess.run(
-#             code2flow_cmd,
-#             shell=True,
-#             capture_output=True,
-#             text=True,
-#             check=True
-#         )
-#         with open("tmp/call_graph.json", "r") as file:
-#             call_graph = json.load(file)
-#             simple_call_graph = transform_graph(call_graph)
-#             with open('tmp/transformed_call_graph.json', 'w', encoding='utf-8') as f:
-#                 json.dump(simple_call_graph, f, indent=2, ensure_ascii=False)
-#             return simple_call_graph
-#     except subprocess.CalledProcessError as e:
-#         # print(f"Error running code2flow: {e}")
-#         # print(f"stderr: {e.stderr}")
-#         # TODO: fix it using: 1. use list_function_directory; 2. do not limit target_function
-#         try:
-#             fixed_cmd = f"code2flow {modified_targets} --output tmp/call_graph.json"
-#             _ = subprocess.run(
-#                 fixed_cmd,
-#                 shell=True,
-#                 capture_output=True,
-#                 text=True,
-#                 check=True
-#             )
-#             with open("tmp/call_graph.json", "r") as file:
-#                 call_graph = json.load(file)
-#                 simple_call_graph = transform_graph(call_graph)
-#                 with open('tmp/transformed_call_graph.json', 'w', encoding='utf-8') as f:
-#                     json.dump(simple_call_graph, f, indent=2, ensure_ascii=False)
-#                 return f"""Cannot find {target_function} in {modified_targets}.
-#                             Instead, this tool reveal all call graphs in target_function:
-#                             """ + str(simple_call_graph)
-#         except subprocess.CalledProcessError as e2:
-#             # print(f"Error running code2flow: {e}")
-#             # print(f"stderr: {e.stderr}")
-#             return "Failed to geneate call graph. Please check if file or function exists."
-#     except FileNotFoundError as e:
-#         raise RuntimeError(
-#             "code2flow not found. Please install with: pip install code2flow"
-#             ) from e
-    
-# def get_call_graph(instance_path: str, params: str) -> Dict[str, str]:
-#     try:
-#         params_dict = json.loads(params)
-#         return _get_call_graph(
-#             instance_path,
-#             params_dict['scopes'],
-#             params_dict['target_function']
-#         )
-#     except json.JSONDecodeError:
-#         return "Error: Invalid JSON format. Please provide valid JSON string."
-#     except KeyError as e:
-#         return f"Error: Missing required parameter: {e}"
-#     except Exception as e:
-#         return f"Error: {str(e)}"
 
 def _get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_function: str) -> str:
     def _check_valid(path):
@@ -545,19 +490,117 @@ def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_funct
     except Exception as e:
         return f"Error: {str(e)}"
 
+# def partition_methods(methods):
+#     # Step 1: group by files
+#     file_groups = {}
+#     for method in methods:
+#         file_part, class_part = _split_path(method)
+#         if file_part not in file_groups:
+#             file_groups[file_part] = []
+#         file_groups[file_part].append(method)
+    
+#     # Step 2: 如果有3个或更少的文件
+#     files = list(file_groups.keys())
+#     if len(files) <= 3:
+#         groups = []
+        
+#         # 首先确保每个文件的方法都在同一个组中
+#         for file in files:
+#             groups.append(file_groups[file])
+        
+#         # 只有当文件数量少于3个时，才考虑进一步划分
+#         if len(files) < 3:
+#             # 找出方法数量最多的文件，尝试按类别拆分
+#             largest_file_idx = max(range(len(groups)), key=lambda i: len(groups[i]))
+#             largest_group = groups[largest_file_idx]
+            
+#             # 按类别分组
+#             class_groups = {}
+#             for method in largest_group:
+#                 _, class_part = _split_path(method)
+#                 # 提取类名（第一个部分）
+#                 class_name = class_part.split('.')[0] if class_part else "unknown"
+                
+#                 if class_name not in class_groups:
+#                     class_groups[class_name] = []
+#                 class_groups[class_name].append(method)
+            
+#             # 如果类别数量足够创建新分组
+#             if len(class_groups) >= (3 - len(groups) + 1):  # +1 因为我们要拆分当前组
+#                 # 按类别数量排序（从多到少）
+#                 sorted_classes = sorted(class_groups.keys(), 
+#                                       key=lambda c: len(class_groups[c]), 
+#                                       reverse=True)
+                
+#                 # 用最大的类别替换原来的组
+#                 groups[largest_file_idx] = class_groups[sorted_classes[0]]
+                
+#                 # 添加其他类别作为新分组
+#                 for i in range(1, min(len(sorted_classes), 3 - len(groups) + 1)):
+#                     if len(groups) < 3:
+#                         groups.append(class_groups[sorted_classes[i]])
+            
+#             # 如果仍然不足3组，用空列表补齐
+#             while len(groups) < 3:
+#                 groups.append([])
+        
+#         return groups
+    
+#     # Step 3: 如果有超过3个文件，按文件数量三等分
+#     # 按文件包含的方法数量排序（从多到少）
+#     sorted_files = sorted(files, key=lambda f: len(file_groups[f]), reverse=True)
+    
+#     # 初始化三个分组
+#     groups = [[] for _ in range(3)]
+#     group_sizes = [0 for _ in range(3)]
+    
+#     # 贪心算法：将文件分配到当前最小的分组中
+#     for file in sorted_files:
+#         methods_count = len(file_groups[file])
+#         # 找到当前最小的分组
+#         min_group_idx = group_sizes.index(min(group_sizes))
+#         groups[min_group_idx].extend(file_groups[file])
+#         group_sizes[min_group_idx] += methods_count
+    
+#     return groups
+
+def partition_methods(methods):
+    # 极端情况：少于3个方法，直接每方法一组
+    if len(methods) < 3:
+        return [[m] for m in methods]
+    
+    # 计算路径距离矩阵（1 - 相似度）
+    n = len(methods)
+    dist_matrix = np.zeros((n, n))
+    for i in range(n):
+        for j in range(i + 1, n):
+            sim = difflib.SequenceMatcher(None, methods[i], methods[j]).ratio()
+            dist_matrix[i, j] = dist_matrix[j, i] = 1 - sim
+    
+    # 层次聚类：合并到3组，complete linkage 最大化组间差异
+    clustering = AgglomerativeClustering(n_clusters=3, metric='precomputed', linkage='complete')
+    labels = clustering.fit_predict(dist_matrix)
+    
+    # 根据标签分组
+    groups = [[] for _ in range(3)]
+    for idx, label in enumerate(labels):
+        groups[label].append(methods[idx])
+    
+    return groups
 
 def main():
     dataset = "swe-bench-lite"
-    instance_id = "matplotlib__matplotlib-24334"
+    instance_id = "sympy__sympy-12236"
     corpus = get_corpus("datasets", dataset, instance_id)
     instance_path = os.path.join(dataset, instance_id)
     test_funcs = True
     test_class = False
     test_file = False
+    test_full_file = False
     test_call_graph = False
     test_lists = False
     if test_funcs:
-        example_func_path = '{"func_paths": ["lib/matplotlib/axis.py/Axis/set_ticks"]}'
+        example_func_path =  '{"func_paths": ["sympy/polys/partfrac.py/apart_undetermined_coeffs", "sympy/polys/partfrac.py/apart_full_decomposition", "sympy/polys/partfrac.py/apart_list_full_decomposition"]}'
         funcs = get_functions(corpus, example_func_path)
         print("funcs: ", funcs)
     if test_class:
@@ -565,8 +608,12 @@ def main():
         funcs = get_class(corpus, example_func_path)
         print("class: ", funcs)
     if test_file:
-        file_path = '{"file_path": "test_path_error.py"}'
+        file_path = '{"file_path": "django/db/models/sql/query.py"}'
         funcs = get_file(corpus, instance_path, file_path)
+        print("file: ", funcs)
+    if test_full_file:
+        file_path = '{"file_path": "django/db/models/sql/query.py"}'
+        funcs = get_full_file(corpus, instance_path, file_path)
         print("file: ", funcs)
     if test_call_graph:
         params = '{"target_function": "django/forms/models.py/ModelMultipleChoiceField/to_python"}'
