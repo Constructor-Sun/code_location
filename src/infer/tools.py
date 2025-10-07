@@ -314,9 +314,9 @@ def get_file(corpus_dict: Dict[str, str], instance_path: str, file_path: str) ->
     except Exception as e:
         return f"{e}"
     if len(result) > MAX_NUM:
-        return list_function_directory(corpus_dict, file_path) + '\n' + import_result
+        return import_result + '\n' + list_function_directory(corpus_dict, file_path)
         # return "Too many functions in this file. Here this tool will give you a list of function names contained in this file. If you wanna check more details about a few of them, please call 'get_functions'. " + str(result.keys())
-    return ', '.join(result.values()) + '\n' + import_result
+    return import_result + '\n' + ', '.join(result.values())
 
 def get_full_file(corpus_dict: Dict[str, str], instance_path: str, file_path: str) -> List[str]:
     try:
@@ -565,10 +565,6 @@ def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_funct
 #     return groups
 
 def partition_methods(methods):
-    # 极端情况：少于3个方法，直接每方法一组
-    if len(methods) < 3:
-        return [[m] for m in methods]
-    
     # 计算路径距离矩阵（1 - 相似度）
     n = len(methods)
     dist_matrix = np.zeros((n, n))

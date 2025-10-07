@@ -9,7 +9,7 @@ def convert_label(label):
     right = parts[1]
 
     # if there is a class name only, meaning __init__ methods shoule be modified
-    if '.' not in right and any(char.isupper() for char in right):
+    if '.' not in right and not right.startswith('_') and any(char.isupper() for char in right):
         right = os.path.join(right, "__init__")
     
     right = right.replace('.', '/')
@@ -19,7 +19,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--test_dir", type=str, default="datasets")
     parser.add_argument("--dataset", type=str, default="swe-bench-lite")
-    parser.add_argument("--saving", type=str, default="rank32-retrieval.json")
+    parser.add_argument("--saving", type=str, default="result.json")
     args = parser.parse_args()
     args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
     if args.dataset == "swe-bench-lite":
@@ -39,7 +39,8 @@ def main():
     null_example = [] # answer is null
     none_example = [] # label is null
     for key in preds:
-        top_k = preds[key]["preds"]
+        # top_k = preds[key]["preds"]
+        top_k = preds[key]
         if not isinstance(top_k, list): 
             null_example.append(key)
             continue

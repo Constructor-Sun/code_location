@@ -7,6 +7,7 @@ import json
 import signal
 import argparse
 import random
+import time
 import numpy as np
 import torch
 from functools import partial
@@ -46,9 +47,9 @@ def load_inference_model(model_name):
         tensor_parallel_size=2,
         vllm_kwargs={
             "max_model_len": 80960*2,
-            "gpu_memory_utilization": 0.9,
+            "gpu_memory_utilization": 0.8,
             "enable_chunked_prefill": True,
-            "max_num_batched_tokens": 65536
+            "max_num_batched_tokens": 80960
         }
     )
     return llm
@@ -110,7 +111,7 @@ def create_agent(llm, corpus, target, args):
         agent=agent_1,
         tools=tools_1,
         memory=memory,
-        max_iterations=None,
+        max_iterations=50,
         # verbose=True,
         handle_parsing_errors=True,
         return_intermediate_steps=True
@@ -125,7 +126,7 @@ def create_agent(llm, corpus, target, args):
         agent=agent_2,
         tools=tools_2,
         memory=memory,
-        max_iterations=None,
+        max_iterations=50,
         # verbose=True,
         handle_parsing_errors=True,
         return_intermediate_steps=True
@@ -151,45 +152,75 @@ def execute(inference_model, target, query, preds, args):
     step_input = {"input": formatted_first_prompt, "chat_history": []}
     response_1 = agent["first"].invoke(step_input)
 
-    # Step 2
-    json_match = re.search(r'\{.*\}', response_1["output"], re.DOTALL)
-    if json_match:
+    # Before step 2, make a judgement
+    try:
+        json_match = re.search(r'\{.*?\}', response_1["output"], re.DOTALL)
         json_str = json_match.group()
         response_final_1 = json.loads(json_str)
         candidate_methods = response_final_1["updated_methods"]
-        partition = partition_methods(candidate_methods)
-        # print("init answer: \n", json.dumps(candidate_methods, indent=4))
-        # for i, group in enumerate(partition):
-        #     print(f"\n第{i+1}组 ({len(group)}个方法):")
-        #     for method in group:
-        #         print(f"  {method}")
-        # exit()
-        total = []
-        for key, methods in enumerate(partition):
-            files = set([_split_path(path)[0] for path in methods])
-            files = ", ".join(list(files))
-            formatted_second_prompt = SECOND_PROMPT.format(query=query, candidates=methods, file=files)
-            step_input = {"input": formatted_second_prompt, "chat_history": []}
-            response_2 = agent["second"].invoke(step_input)
-            # print("Files:", files)
-            # print(f"updated_methods_{key}: ", response_2["output"])
-            json_match = re.search(r'\{.*\}', response_2["output"], re.DOTALL)
-            if json_match:
-                json_str = json_match.group()
-                response_final_1 = json.loads(json_str)
-                current = response_final_1["methods_tobe_modified"]
-                total.extend(current)
 
-        print("original preds: ", json.dumps(preds, indent=4))
+        # Aim to avoid path analysis error at the 1st stage
+        count = sum(1 for method in candidate_methods if ".py/" in method)
+        if count < 7:
+            raise ValueError(f"Only {count} valid path at the first stage, use the initial candidates.")
+    except:
+        candidate_methods = preds
+    
+    class_list = []
+    file_list = []
+    module_func_list = []
+    for path in candidate_methods:
+        left, right = _split_path(path)
+        file_list.append(left)
+        if "." in right:
+            class_list.append(right.split(".")[0])
+        if "." not in right:
+            if not right.startswith('_') and any(char.isupper() for char in right):
+                class_list.append(right)
+            else:
+                module_func_list.append(right)
+    class_num = len(set(class_list))
+    file_num = len(set(file_list))
+    module_func_num = len(set(module_func_list))
+    print("class_num: ", class_num)
+    print("file_num: ", file_num)
+    print("module_func_num: ", module_func_num)
+    # TODO: in fact there is another condition: almost module-level functions while no classes
+    if file_num == 1 or class_num <= 2 and file_num <= 2:
+        print("ori: ", json.dumps(preds, indent=4))
         print("init answer: \n", json.dumps(candidate_methods, indent=4))
-        for i, group in enumerate(partition):
-            print(f"\n第{i+1}组 ({len(group)}个方法):")
-            for method in group:
-                print(f"  {method}")
-        print("final answer: \n", json.dumps(total, indent=4))
-        return total
-    else:
-        return "Not found!"
+        return candidate_methods
+
+    # Step 2
+    partition = partition_methods(candidate_methods)
+    # print("init answer: \n", json.dumps(candidate_methods, indent=4))
+    # for i, group in enumerate(partition):
+    #     print(f"\n第{i+1}组 ({len(group)}个方法):")
+    #     for method in group:
+    #         print(f"  {method}")
+    # exit()
+    total = []
+    for _, methods in enumerate(partition):
+        files = set([_split_path(path)[0] for path in methods])
+        files = ", ".join(list(files))
+        formatted_second_prompt = SECOND_PROMPT.format(query=query, candidates=methods, scope=files)
+        step_input = {"input": formatted_second_prompt, "chat_history": []}
+        response_2 = agent["second"].invoke(step_input)
+        json_match = re.search(r'\{.*\}', response_2["output"], re.DOTALL)
+        if json_match:
+            json_str = json_match.group()
+            response_final_1 = json.loads(json_str)
+            current = response_final_1["methods_tobe_modified"]
+            total.extend(current)
+
+    print("original preds: ", json.dumps(preds, indent=4))
+    print("init answer: \n", json.dumps(candidate_methods, indent=4))
+    for i, group in enumerate(partition):
+        print(f"\n第{i+1}组 ({len(group)}个方法):")
+        for method in group:
+            print(f"  {method}")
+    print("final answer: \n", json.dumps(total, indent=4))
+    return total
     
 def timeout_handler(signum, frame):
     raise TimeoutError("Execution timed out after 5 minutes")
@@ -212,7 +243,6 @@ def main():
     args.target = os.path.join(args.test_dir, args.dataset + '-' + args.target)
     args.retrieval = os.path.join(args.test_dir, args.dataset + '-' + args.retrieval)
     # args.target = os.path.join(args.test_dir, args.target)
-    # args.retrieval = os.path.join(args.test_dir, args.retrieval)
     print("target: ", args.target)
     print("retrieval: ", args.retrieval)
     print("to save in: ", args.saving)
@@ -228,20 +258,39 @@ def main():
         saving_dict = {}
 
     # execute
-    inference_model = load_inference_model(args.inference_model)
+    # inference_model = load_inference_model(args.inference_model)
+    inference_model = None # 初始化为 None
+    RESTART_FREQUENCY = 10
+    target_processed_count = 0 
     with open(args.target, 'r', encoding='utf-8') as f:
         data = json.load(f)
         keys = list(data.keys())
+        print("total: ", len(keys))
         results = saving_dict
         for target in keys:
             if target not in retrieval_dict:
                 continue
-            if target in results and results[target] is not None:
+            # if target in results and results[target] is not None and isinstance(results[target], list):
+            #     continue
+            # if target == "django__django-12308" or target == "pydata__xarray-4493":
+            #     continue
+            if target != "django__django-11001":
                 continue
-            # if target == "sympy__sympy-12236":
-            #     continue
-            # if target != "pytest-dev__pytest-7490":
-            #     continue
+
+            if inference_model is None or target_processed_count % RESTART_FREQUENCY == 0:
+                if inference_model is not None:
+                    print(f"--- 达到 {RESTART_FREQUENCY} 例重启点，销毁旧 VLLM 实例 ---")
+                    del inference_model
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
+                    # 留一点时间让系统和 GPU 完成清理
+                    time.sleep(5) # 增加延迟等待资源完全释放
+                
+                inference_model = load_inference_model(args.inference_model) 
+
+            print("current target: ", target)
             query = retrieval_dict[target]["query"]
             preds = retrieval_dict[target]["preds"]
 
@@ -251,7 +300,7 @@ def main():
 
             while retries < max_retries and answer is None:
                 signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(240)
+                signal.alarm(300)
                 try:
                     answer = execute(inference_model, target, query, preds, args)
                     signal.alarm(0)
@@ -259,6 +308,8 @@ def main():
                         print(f"Retry successful for {target}")
                 except TimeoutError:
                     signal.alarm(0)
+                    del inference_model
+                    inference_model = None
                     gc.collect()
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
@@ -286,9 +337,10 @@ def main():
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+
+            target_processed_count += 1
             with open(args.saving, 'w', encoding='utf-8') as save_file:
                 json.dump(results, save_file, indent=2, ensure_ascii=False)
-            
             print(f"Saved result for {target}")
 
 if __name__ == "__main__":
