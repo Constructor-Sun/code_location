@@ -1,6 +1,6 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 import re
 import gc
 import json
@@ -240,9 +240,9 @@ def main():
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
     args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
-    args.target = os.path.join(args.test_dir, args.dataset + '-' + args.target)
+    # args.target = os.path.join(args.test_dir, args.dataset + '-' + args.target)
     args.retrieval = os.path.join(args.test_dir, args.dataset + '-' + args.retrieval)
-    # args.target = os.path.join(args.test_dir, args.target)
+    args.target = os.path.join(args.test_dir, args.target)
     print("target: ", args.target)
     print("retrieval: ", args.retrieval)
     print("to save in: ", args.saving)
@@ -270,12 +270,12 @@ def main():
         for target in keys:
             if target not in retrieval_dict:
                 continue
-            # if target in results and results[target] is not None and isinstance(results[target], list):
-            #     continue
+            if target in results and results[target] is not None and isinstance(results[target], list):
+                continue
             # if target == "django__django-12308" or target == "pydata__xarray-4493":
             #     continue
-            if target != "django__django-11001":
-                continue
+            # if target != "pylint-dev__pylint-7228":
+            #     continue
 
             if inference_model is None or target_processed_count % RESTART_FREQUENCY == 0:
                 if inference_model is not None:
@@ -284,8 +284,6 @@ def main():
                     gc.collect()
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                    
-                    # 留一点时间让系统和 GPU 完成清理
                     time.sleep(5) # 增加延迟等待资源完全释放
                 
                 inference_model = load_inference_model(args.inference_model) 

@@ -55,7 +55,9 @@ Now, follow these steps to help you fix the issue, ensuring EVERY STEP adheres t
 
 Step 1: Be familiar with {scope}
 - Use get_file or get_class to get the full context of {scope}
-- Try analyze each member in the {scope}
+- Pay attention to each member in {scope} using the following loop. At this stage, you should take a thorough investigation
+    - LOOP STARTS: If {scope} is a file, use get_functions to get module-level functions, then use get_class to get classes
+    - LOOP ENDS: each member mentioned in Step 1 is aquired
 
 Step 2: Downstream Dependency Analysis (Limited to {scope})
 - For each candidate function, analyze WHAT IT CALLS (callee analysis), but ONLY trace calls to functions/methods that exist within {scope}.
@@ -93,6 +95,40 @@ Incorrect (do NOT do this): ["external.py:func_x"] - this would violate the rule
 }}
 """
 
+# SECOND_PROMPT = """
+# Given the following GitHub problem description, your object is to use initial candidates to fix this issue.
+# - Issue Description: {query}
+
+# Now, follow these steps to help you fix the issue:
+
+# Step 1: Be familiar with the structure of {scope}
+# - If {scope} ends with .py, use get_file to get the full context; Otherwise use get_class to get the full context;
+
+# Step 2: Be familiar with the context of {scope}
+# - Pay attention to each member in {scope} using the following loop. At this stage, you should take a thorough investigation
+#     - LOOP STARTS: If {scope} is a file, use get_functions to get module-level functions, then use get_class to get classes; If {scope} is a class, use get_functions to get each methods.
+#     - LOOP ENDS: each member mentioned in Step 1 is aquired
+
+# Step 3: Identify feasible methods to be modified
+# - Assume the root cause resides within {scope}, then find out the most appropriate modification methods or module-level functions:
+# 	- First consider {candidates}
+# 	- If methods or module-level functions from Step 2 are more suitable to be modified, then consider them as the most appropriate ones.
+# - You must return methods or module-level functions. You should never return a class name even if original candidates are sometimes class names.
+
+# ## Tool calls Input**:
+# - get_functions Format: '{{"func_paths": []}}'
+# - get_class Format: '{{"class_path": ''}}'
+# - get_file Format: '{{"target_function": ''}}'
+
+# ## Final Answer Format:
+# - You should only return a valid JSON string with key "main_idea" and "methods_tobe_modified"
+# - "methods_tobe_modified" should include at least 4 methods with complete paths, all of them must be in theses files ONLY: {scope}.
+# - Final Answer:{{
+#     "main_idea": "",
+#     "methods_tobe_modified": []
+# }}
+# """
+
 REACT_PROMPT = '''Answer the following questions as best you can. 
 You have access to the following tools:
 {tools}
@@ -116,55 +152,48 @@ Thought: {agent_scratchpad}
 '''
 
 # SECOND_PROMPT = """
-# IMPORTANT DEFINITIONS:
-# - Callee: A function/method invoked BY the candidate (downstream/outgoing calls).
-# - Caller: A function/method that invokes the candidate (upstream/incoming calls). DO NOT analyze or include callers EVER.
-
-# GOAL: Identify methods to modify by following the CALL CHAIN DOWNSTREAM from candidates (callees, then callees of callees, etc.). Prioritize methods in these files: {scope}. You MAY extend to functions in other files ONLY if they are directly called by candidates or their callees (proven via tool traces). Always aim for at least 4 methods; if fewer found, select the best available and note in reasoning.
+# IMPORTANT CONSTRAINT: All analysis and modifications MUST be limited to methods or module-level functions within these files ONLY: {scope}. You MUST NOT reference, analyze, or suggest ANY methods from other files. If a dependency leads outside {scope}, ignore it and focus solely on elements within {scope}.
 
 # Given the following GitHub problem description, your objective is to use initial candidates to fix this issue.
 # - Issue Description: {query}
 # - Candidates: {candidates}
 
-# Follow these steps, ensuring DOWNSTREAM-ONLY (callee) analysis. Never go upstream to callers.
+# Now, follow these steps to help you fix the issue, ensuring EVERY STEP adheres to the constraint above (methods/functions ONLY from {scope}):
 
-# Step 1: Downstream Dependency Analysis (Callee-Only Chain)
-# - Start with Level 0: The candidates themselves.
-# - For each at current level, analyze ONLY WHAT IT CALLS (callees):
-#   - Direct function calls within the methods.
-#   - Class instantiations and method invocations.
-#   - Return types and their dependencies (if callable).
-# - Use tools to trace: Call get_functions or get_file to verify callees and their files.
-# - Build a chain level-by-level (max depth 3 to avoid loops):
-#   - Level 1: Direct callees of candidates.
-#   - Level 2: Callees of Level 1.
-#   - Etc.
-# - Discard ANYTHING that traces back to callers. Example: If A calls B (B is callee of A), do NOT include functions that call A.
-# - If a callee is outside {scope}, include it ONLY if tool-verified as in the chain.
-# - Reasoning Trace: List the chain like: "Level 0: candidate1 -> Level 1: calleeX (in fileY) -> Level 2: calleeZ (in fileW)"
-# - Termination: Stop at depth 3 or if no new callees. If chain is short (<4 total methods), reuse from earlier levels or note "limited chain" but still output 4 (e.g., duplicates if needed).
+# Step 1: Be familiar with {scope}
+# - Use get_file or get_class to get the full context of {scope}
+# - Try analyze each member in the {scope}
 
-# Step 2: Identify Feasible Methods to Be Modified
-# - From the callee chain, select the most appropriate methods for modification (at least 4).
-# - Prioritize those in {scope}; include external only if chain-linked.
-# - All must be methods or module-level functions (complete paths). Never return class names.
-# - Validation: For each selected, confirm it's a callee (not caller) via chain trace. If not, discard and replace.
+# Step 2: Downstream Dependency Analysis (Limited to {scope})
+# - For each candidate function, analyze WHAT IT CALLS (callee analysis), but ONLY trace calls to functions/methods that exist within {scope}.
+# - Trace outgoing calls: functions/methods invoked by the candidates, but discard any that are not in {scope}.
+#     - Direct function calls within candidate methods (only if callee is in {scope})
+#     - Class instantiations and method invocations (only if class/method is defined in {scope})  
+#     - Return types and their dependencies (only if types/dependencies are handled in {scope})
+# - DO NOT analyze who calls the candidates (caller analysis). If no valid callees in {scope}, note that and proceed.
 
-# Step 3: Anti-Loop and Debug Check
-# - If stuck (e.g., no callees in {scope}), broaden to chain-extended but stop after 2 tool calls max per level.
-# - Verify: No callers included? Chain depth <=3? At least 4 outputs?
-# - Example Correct Chain: Candidate: funcA in file1.py calls funcB in file1.py, which calls funcC in file2.py. Methods: ["file1.py:funcA", "file1.py:funcB", "file2.py:funcC", "file1.py:someOtherCallee"]
-# - Example Incorrect (DO NOT): Include funcD that calls funcA (that's a caller).
+# Step 3: Identify Feasible Methods to Be Modified
+# - Assume the root cause resides within the same files as the original candidates ({scope}), then find the most appropriate modification methods.
+# - All methods or module-level functions MUST be in these files ONLY: {scope}. If a potential method is not in {scope}, discard it immediately and select an alternative from {scope}.
+# - You MUST return methods or module-level functions ONLY. Never return a class name, even if original candidates include class names.
+# - Aim for at least 4 methods, all with complete paths, exclusively from {scope}.
+
+# Step 4: Validation Check
+# - Review your identified methods: For each one, confirm it is defined in {scope}. If ANY method is from outside {scope}, replace it with a valid one from {scope} or explain why no alternative exists (but still provide at least 4 valid ones).
+
+# Example of Correct Output:
+# Suppose {scope} = ['file1.py', 'file2.py'], and methods must be from there.
+# Correct "methods_tobe_modified": ["file1.py:func_a", "file1.py:func_b", "file2.py:method_c", "file2.py:func_d"]
+# Incorrect (do NOT do this): ["external.py:func_x"] - this would violate the rule.
 
 # ## Tool Calls Input:
 # - get_functions Format: '{{"func_paths": []}}'
 # - get_class Format: '{{"class_path": ''}}'
 # - get_file Format: '{{"target_function": ''}}'
-# - Use tools sparingly to verify chains; batch if possible (e.g., multiple func_paths in one call).
 
 # ## Final Answer Format:
-# - Return ONLY a valid JSON string with "main_idea" and "methods_tobe_modified".
-# - "methods_tobe_modified" MUST include at least 4 methods with complete paths, from the callee chain ONLY.
+# - You should only return a valid JSON string with keys "main_idea" and "methods_tobe_modified".
+# - "methods_tobe_modified" MUST include at least 4 methods with complete paths, ALL of them from {scope} ONLY. Double-check this before outputting.
 # - Final Answer:{{
 #     "main_idea": "",
 #     "methods_tobe_modified": []

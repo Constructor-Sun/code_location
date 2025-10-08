@@ -564,34 +564,89 @@ def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_funct
     
 #     return groups
 
-def partition_methods(methods):
-    # 计算路径距离矩阵（1 - 相似度）
+def path_level_distance(path1: str, path2: str) -> float:
+    """
+    计算基于路径层级的距离。
+    距离越小，表示共享的祖先路径越长。
+    """
+    components1 = path1.split('/')
+    components2 = path2.split('/')
+    
+    # 找到共同前缀（公共祖先）的长度
+    common_len = 0
+    
+    for c1, c2 in zip(components1, components2):
+        if c1 == c2:
+            common_len += 1
+        else:
+            break
+            
+    # 定义距离：可以使用 1 - (共同长度 / 最大可能长度) 或基于路径差异
+    # 这里使用一个更直接的层级差异：总长度之和 - 2 * 共同长度。
+    # 这个距离表示需要修改/删除多少层级才能从一个路径到达另一个。
+    # 例如: A/B/C 和 A/B/D 的距离是 (3+3) - 2*2 = 2 (C->D)
+    # 例如: A/B/C 和 A/X/Y 的距离是 (3+3) - 2*1 = 4 (B/C -> X/Y)
+    distance = len(components1) + len(components2) - 2 * common_len
+    
+    # 如果要将其归一化到 [0, 1] 范围 (可选, 但有利于聚类算法的稳定性):
+    # max_possible_distance = len(components1) + len(components2)
+    # distance = (len(components1) + len(components2) - 2 * common_len) / max_possible_distance
+    
+    return distance
+
+def partition_methods(methods, n_clusters=3):
+    """
+    基于路径层级距离进行聚类分组
+    """
     n = len(methods)
     dist_matrix = np.zeros((n, n))
+    
     for i in range(n):
         for j in range(i + 1, n):
-            sim = difflib.SequenceMatcher(None, methods[i], methods[j]).ratio()
-            dist_matrix[i, j] = dist_matrix[j, i] = 1 - sim
-    
-    # 层次聚类：合并到3组，complete linkage 最大化组间差异
-    clustering = AgglomerativeClustering(n_clusters=3, metric='precomputed', linkage='complete')
+            # 使用基于路径层级的距离函数
+            dist = path_level_distance(methods[i], methods[j])
+            dist_matrix[i, j] = dist_matrix[j, i] = dist
+            
+    # 层次聚类：通常对于路径结构，使用 'average' 或 'complete'
+    # 因为距离已经是实际的层级差异，'precomputed' 和 'complete' 是合适的。
+    clustering = AgglomerativeClustering(n_clusters=n_clusters, metric='precomputed', linkage='complete')
     labels = clustering.fit_predict(dist_matrix)
     
     # 根据标签分组
-    groups = [[] for _ in range(3)]
+    groups = [[] for _ in range(n_clusters)]
     for idx, label in enumerate(labels):
         groups[label].append(methods[idx])
-    
+        
     return groups
+
+# def partition_methods(methods):
+#     # 计算路径距离矩阵（1 - 相似度）
+#     n = len(methods)
+#     dist_matrix = np.zeros((n, n))
+#     for i in range(n):
+#         for j in range(i + 1, n):
+#             sim = difflib.SequenceMatcher(None, methods[i], methods[j]).ratio()
+#             dist_matrix[i, j] = dist_matrix[j, i] = 1 - sim
+    
+#     # 层次聚类：合并到3组，complete linkage 最大化组间差异
+#     clustering = AgglomerativeClustering(n_clusters=3, metric='precomputed', linkage='complete')
+#     labels = clustering.fit_predict(dist_matrix)
+    
+#     # 根据标签分组
+#     groups = [[] for _ in range(3)]
+#     for idx, label in enumerate(labels):
+#         groups[label].append(methods[idx])
+    
+#     return groups
 
 def main():
     dataset = "swe-bench-lite"
-    instance_id = "sympy__sympy-12236"
+    instance_id = "pydata__xarray-4248"
     corpus = get_corpus("datasets", dataset, instance_id)
     instance_path = os.path.join(dataset, instance_id)
-    test_funcs = True
+    test_funcs = False
     test_class = False
-    test_file = False
+    test_file = True
     test_full_file = False
     test_call_graph = False
     test_lists = False
@@ -604,7 +659,7 @@ def main():
         funcs = get_class(corpus, example_func_path)
         print("class: ", funcs)
     if test_file:
-        file_path = '{"file_path": "django/db/models/sql/query.py"}'
+        file_path = '{"file_path": "xarray/core/formatting.py"}'
         funcs = get_file(corpus, instance_path, file_path)
         print("file: ", funcs)
     if test_full_file:
