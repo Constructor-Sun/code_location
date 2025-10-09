@@ -19,7 +19,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--test_dir", type=str, default="datasets")
     parser.add_argument("--dataset", type=str, default="swe-bench-lite")
-    parser.add_argument("--saving", type=str, default="result.json")
+    parser.add_argument("--saving", type=str, default="rank32-retrieval.json") # rank32-retrieval, result-api
     args = parser.parse_args()
     args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
     if args.dataset == "swe-bench-lite":
@@ -39,8 +39,10 @@ def main():
     null_example = [] # answer is null
     none_example = [] # label is null
     for key in preds:
-        # top_k = preds[key]["preds"]
-        top_k = preds[key]
+        if "retrieval" in args.saving.split('/')[-1]:
+            top_k = preds[key]["preds"]
+        else:
+            top_k = preds[key]
         if not isinstance(top_k, list): 
             null_example.append(key)
             continue
