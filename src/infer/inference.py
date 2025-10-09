@@ -1,6 +1,6 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 import re
 import gc
 import json
@@ -13,6 +13,7 @@ import torch
 from functools import partial
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_community.llms import VLLM
+from langchain_community.chat_models import ChatOpenAI
 from langchain.memory import ConversationBufferMemory
 from langchain.tools import StructuredTool
 from langchain_core.prompts import PromptTemplate
@@ -35,23 +36,35 @@ def set_global_seed(seed=42):
     os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 
 def load_inference_model(model_name):
-    llm = VLLM(
-        model=model_name,
-        max_new_tokens=80960*2,
-        temperature=0, # 0.7
-        top_p=0.8,
-        top_k=20,
-        do_sample=False, # True
-        repetition_penalty=1.2,
-        return_full_text=False,
-        tensor_parallel_size=2,
-        vllm_kwargs={
-            "max_model_len": 80960*2,
-            "gpu_memory_utilization": 0.8,
-            "enable_chunked_prefill": True,
-            "max_num_batched_tokens": 80960
-        }
-    )
+    if model_name == "qwen3-coder-480b-a35b-instruct":
+        llm = ChatOpenAI(
+            model=model_name,
+            openai_api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            openai_api_key="sk-5368f4efcc9a464ca1a787f011186efa",
+            max_tokens=65536,
+            temperature=0,
+            model_kwargs={"seed": 42},
+            request_timeout=60,
+            max_retries=2 
+        )
+    else:
+        llm = VLLM(
+            model=model_name,
+            max_new_tokens=80960*2,
+            temperature=0, # 0.7
+            top_p=0.8,
+            top_k=20,
+            do_sample=False, # True
+            repetition_penalty=1.2,
+            return_full_text=False,
+            tensor_parallel_size=2,
+            vllm_kwargs={
+                "max_model_len": 80960*2,
+                "gpu_memory_utilization": 0.8,
+                "enable_chunked_prefill": True,
+                "max_num_batched_tokens": 80960
+            }
+        )
     return llm
 
 def create_agent(llm, corpus, target, args):
@@ -111,7 +124,7 @@ def create_agent(llm, corpus, target, args):
         agent=agent_1,
         tools=tools_1,
         memory=memory,
-        max_iterations=50,
+        max_iterations=20,
         # verbose=True,
         handle_parsing_errors=True,
         return_intermediate_steps=True
@@ -126,7 +139,7 @@ def create_agent(llm, corpus, target, args):
         agent=agent_2,
         tools=tools_2,
         memory=memory,
-        max_iterations=50,
+        max_iterations=20,
         # verbose=True,
         handle_parsing_errors=True,
         return_intermediate_steps=True
@@ -193,12 +206,6 @@ def execute(inference_model, target, query, preds, args):
 
     # Step 2
     partition = partition_methods(candidate_methods)
-    # print("init answer: \n", json.dumps(candidate_methods, indent=4))
-    # for i, group in enumerate(partition):
-    #     print(f"\n第{i+1}组 ({len(group)}个方法):")
-    #     for method in group:
-    #         print(f"  {method}")
-    # exit()
     total = []
     for _, methods in enumerate(partition):
         files = set([_split_path(path)[0] for path in methods])
@@ -207,11 +214,30 @@ def execute(inference_model, target, query, preds, args):
         step_input = {"input": formatted_second_prompt, "chat_history": []}
         response_2 = agent["second"].invoke(step_input)
         json_match = re.search(r'\{.*\}', response_2["output"], re.DOTALL)
+        # print("response_2 intermediate_steps:\n", response_2['intermediate_steps'])
         if json_match:
             json_str = json_match.group()
-            response_final_1 = json.loads(json_str)
-            current = response_final_1["methods_tobe_modified"]
+            response_final_2 = json.loads(json_str)
+            current = response_final_2["methods_tobe_modified"]
             total.extend(current)
+        else:
+            intermediate_steps = response_2['intermediate_steps']
+            valid = False
+            for step in reversed(intermediate_steps):
+                if (step and len(step) >= 1 and hasattr(step[0], 'log') and step[0].log):
+                    json_match = re.search(r'\{.*\}', step[0].log, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group()
+                        response_final_2 = json.loads(json_str)
+                        current = response_final_2["methods_tobe_modified"]
+                        total.extend(current)
+                        valid = True
+                        break
+            if not valid:
+                exception = Exception()
+                exception.response = response_2  # 动态添加属性
+                raise exception
+                    
 
     print("original preds: ", json.dumps(preds, indent=4))
     print("init answer: \n", json.dumps(candidate_methods, indent=4))
@@ -232,11 +258,11 @@ def main():
     parser.add_argument("--test_dir", type=str, default="datasets")
     parser.add_argument("--dataset", type=str, default="swe-bench-lite") # loc-agent
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
-    parser.add_argument("--inference_model", type=str, default="Qwen/Qwen3-Coder-30B-A3B-Instruct")
+    parser.add_argument("--inference_model", type=str, default="qwen3-coder-480b-a35b-instruct") # Qwen/Qwen3-Coder-30B-A3B-Instruct, qwen3-coder-480b-a35b-instruct
     parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--target", type=str, default="instances.json")
     parser.add_argument("--retrieval", type=str, default="embed32-retrieval.json")
-    parser.add_argument("--saving", type=str, default="result.json")
+    parser.add_argument("--saving", type=str, default="result-api.json")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
     args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
@@ -272,9 +298,7 @@ def main():
                 continue
             if target in results and results[target] is not None and isinstance(results[target], list):
                 continue
-            # if target == "django__django-12308" or target == "pydata__xarray-4493":
-            #     continue
-            # if target != "pylint-dev__pylint-7228":
+            # if target != "sympy__sympy-14024":
             #     continue
 
             if inference_model is None or target_processed_count % RESTART_FREQUENCY == 0:
@@ -323,6 +347,8 @@ def main():
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                     print(f"Other error occurred for {target}: {type(e).__name__}: {e}")
+                    print("response output: ", e.response["output"])
+                    print("response intermediate_steps: ", e.response["intermediate_steps"])
                     if retries < max_retries:
                         print(f"Retrying due to {type(e).__name__}...")
                         retries += 1
