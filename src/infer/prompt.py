@@ -129,6 +129,35 @@ Incorrect (do NOT do this): ["external.py:func_x"] - this would violate the rule
 # }}
 # """
 
+# REACT_PROMPT = '''Answer the following questions as best you can. 
+# You have access to the following tools:
+# {tools}
+# **Tool calls failure handing:** If a tool fails, follow its returned suggestions to get your results.
+
+# **CRITICAL FORMAT RULES:**
+# - After each "Action Input:", you MUST STOP and wait for the Observation from the environment.
+# - NEVER generate "Observation:" yourself - this will be provided by the environment.
+# - If you generate an Observation, the tool will fail.
+
+# Use the following format:
+# 1. Question: the input question you must answer
+# 2. LOOP: think which tool you should call next and analyze current situation. This loop can repeat N times before you give your final answer.
+#     - What you give:
+#         - Thought: Explain your thinking step-by-step based on *Question* and *Observation*. You're encouraged to give long thought.
+#         - Action: tool calls, should be one of [{tool_names}]. You should only enter tool's name, e.g., get_file
+#         - Action Input: a valid JSON string containing parameters of tool calls, e.g., '{{"func_paths": []}}'.
+#         *** STOP HERE after Action Input ***
+#     - What the environment returns:
+#         - Observation: the result of tool calls
+# 3. Final Answer: I now know the final answer... The final answer is listed in the JSON string: ... 
+# (After you give this JSON string, you MUST STOP. You should never repeat the same JSON string.)
+
+# Begin!
+
+# Question: {input}
+# Thought: {agent_scratchpad}
+# '''
+
 REACT_PROMPT = '''Answer the following questions as best you can. 
 You have access to the following tools:
 {tools}

@@ -14,6 +14,7 @@ from functools import partial
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_community.llms import VLLM
 from langchain_community.chat_models import ChatOpenAI
+from langchain_xai import ChatXAI
 from langchain.memory import ConversationBufferMemory
 from langchain.tools import StructuredTool
 from langchain_core.prompts import PromptTemplate
@@ -36,24 +37,13 @@ def set_global_seed(seed=42):
     os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 
 def load_inference_model(model_name):
-    if model_name == "qwen3-coder-480b-a35b-instruct":
-        llm = ChatOpenAI(
-            model=model_name,
-            openai_api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            openai_api_key="sk-5368f4efcc9a464ca1a787f011186efa",
-            max_tokens=65536,
-            temperature=0,
-            model_kwargs={"seed": 42},
-            request_timeout=60,
-            max_retries=2 
-        )
-    else:
+    if model_name == "Qwen/Qwen3-Coder-30B-A3B-Instruct":
         llm = VLLM(
             model=model_name,
             max_new_tokens=80960*2,
             temperature=0, # 0.7
             top_p=0.8,
-            top_k=20,
+            top_k=30,
             do_sample=False, # True
             repetition_penalty=1.2,
             return_full_text=False,
@@ -64,6 +54,17 @@ def load_inference_model(model_name):
                 "enable_chunked_prefill": True,
                 "max_num_batched_tokens": 80960
             }
+        )
+    else:
+        llm = ChatOpenAI(
+            model=model_name,
+            openai_api_base="https://openrouter.ai/api/v1", # "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            openai_api_key="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", # "sk-5368f4efcc9a464ca1a787f011186efa",
+            max_tokens=65536,
+            temperature=0,
+            model_kwargs={"seed": 42},
+            request_timeout=60,
+            max_retries=2 
         )
     return llm
 
@@ -118,14 +119,15 @@ def create_agent(llm, corpus, target, args):
     agent_1 = create_react_agent(
         tools=tools_1,
         llm=llm,
-        prompt=prompt
+        prompt=prompt,
+        stop_sequence=False
     )
     executor_1 = AgentExecutor(
         agent=agent_1,
         tools=tools_1,
         memory=memory,
-        max_iterations=20,
-        # verbose=True,
+        max_iterations=30,
+        verbose=True,
         handle_parsing_errors=True,
         return_intermediate_steps=True
     )
@@ -133,14 +135,15 @@ def create_agent(llm, corpus, target, args):
     agent_2 = create_react_agent(
         tools=tools_2,
         llm=llm,
-        prompt=prompt
+        prompt=prompt,
+        stop_sequence=False
     )
     executor_2 = AgentExecutor(
         agent=agent_2,
         tools=tools_2,
         memory=memory,
         max_iterations=20,
-        # verbose=True,
+        verbose=True,
         handle_parsing_errors=True,
         return_intermediate_steps=True
     )
@@ -149,11 +152,6 @@ def create_agent(llm, corpus, target, args):
         "first": executor_1,
         "second": executor_2
     }
-
-def save_conversation_history(agent):
-    chat_history = agent.memory
-    print(agent.memory.load_memory_variables({}))
-    print("saving successful!")
 
 def execute(inference_model, target, query, preds, args):
     corpus = get_corpus(args.test_dir, args.dataset, target)
@@ -235,7 +233,7 @@ def execute(inference_model, target, query, preds, args):
                         break
             if not valid:
                 exception = Exception()
-                exception.response = response_2  # 动态添加属性
+                exception.response = response_2
                 raise exception
                     
 
@@ -258,11 +256,12 @@ def main():
     parser.add_argument("--test_dir", type=str, default="datasets")
     parser.add_argument("--dataset", type=str, default="swe-bench-lite") # loc-agent
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
-    parser.add_argument("--inference_model", type=str, default="qwen3-coder-480b-a35b-instruct") # Qwen/Qwen3-Coder-30B-A3B-Instruct, qwen3-coder-480b-a35b-instruct
+    parser.add_argument("--inference_model", type=str, default="x-ai/grok-code-fast-1") 
+    # Qwen/Qwen3-Coder-30B-A3B-Instruct, qwen3-coder-480b-a35b-instruct, x-ai/grok-code-fast-1
     parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--target", type=str, default="instances.json")
     parser.add_argument("--retrieval", type=str, default="embed32-retrieval.json")
-    parser.add_argument("--saving", type=str, default="result-api.json")
+    parser.add_argument("--saving", type=str, default="result.json")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
     args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
@@ -296,10 +295,10 @@ def main():
         for target in keys:
             if target not in retrieval_dict:
                 continue
-            if target in results and results[target] is not None and isinstance(results[target], list):
-                continue
-            # if target != "sympy__sympy-14024":
+            # if target in results and results[target] is not None and isinstance(results[target], list):
             #     continue
+            if target != "sympy__sympy-11870":
+                continue
 
             if inference_model is None or target_processed_count % RESTART_FREQUENCY == 0:
                 if inference_model is not None:
@@ -347,8 +346,6 @@ def main():
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                     print(f"Other error occurred for {target}: {type(e).__name__}: {e}")
-                    print("response output: ", e.response["output"])
-                    print("response intermediate_steps: ", e.response["intermediate_steps"])
                     if retries < max_retries:
                         print(f"Retrying due to {type(e).__name__}...")
                         retries += 1

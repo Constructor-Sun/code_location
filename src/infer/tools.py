@@ -1,4 +1,5 @@
 import os
+import re
 import ast
 import json
 import subprocess
@@ -101,6 +102,14 @@ class GetCallGraphInput(BaseModel):
             '{"target_function": "src/_pytest/cacheprovider.py/cache"}'
         ]
     )
+
+def get_valid_json(output):
+    json_matches = re.findall(r'\{.*?\}', output, re.DOTALL)
+    if json_matches:
+        json_match = json_matches[-1]
+    else:
+        json_match = output
+    return json_match
 
 def _split_path(path):
     # find file first. Always assume there is a .py file in the path.
@@ -235,6 +244,7 @@ def get_corpus(test_dir: str, dataset: str, instance_id: str) -> Dict[str, str]:
 def get_functions(corpus_dict: Dict[str, str], func_paths: str) -> List[str]:
     try:
         # Parse the JSON string, expecting an object with 'func_paths' key
+        func_paths = get_valid_json(func_paths)
         input_data = json.loads(func_paths)
         if not isinstance(input_data, dict) or "func_paths" not in input_data:
             return "Input must be a valid JSON sting with a 'func_paths' key"
@@ -268,6 +278,7 @@ def get_functions(corpus_dict: Dict[str, str], func_paths: str) -> List[str]:
 def get_class(corpus_dict: Dict[str, str], class_path: str) -> List[str]:
     try:
         # Parse the JSON string, expecting an object with 'class_path' key
+        class_path = get_valid_json(class_path)
         input_data = json.loads(class_path)
         if not isinstance(input_data, dict) or "class_path" not in input_data:
             return "Input must be a valid JSON sting with a 'class_path' key"
@@ -293,6 +304,7 @@ def get_class(corpus_dict: Dict[str, str], class_path: str) -> List[str]:
 def get_file(corpus_dict: Dict[str, str], instance_path: str, file_path: str) -> List[str]:
     try:
         # Parse the JSON string, expecting an object with 'file_path' key
+        file_path = get_valid_json(file_path)
         input_data = json.loads(file_path)
         if not isinstance(input_data, dict) or "file_path" not in input_data:
             return "Input must be a valid JSON sting with a 'file_path' key"
@@ -339,6 +351,7 @@ def get_full_file(corpus_dict: Dict[str, str], instance_path: str, file_path: st
     
 def list_function_directory(corpus_dict: Dict[str, str], file_path: str) -> List[str]:
     try:
+        file_path = get_valid_json(file_path)
         input_data = json.loads(file_path)
         if not isinstance(input_data, dict) or "file_path" not in input_data:
             return "Input must be a valid JSON sting with a 'file_path' key"
@@ -477,6 +490,7 @@ def _get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_func
 def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_function: str) -> str:
     try:
         print("target_function: ", target_function)
+        target_function = get_valid_json(target_function)
         target = json.loads(target_function)["target_function"]
         return _get_call_graph(
             corpus_dist,
