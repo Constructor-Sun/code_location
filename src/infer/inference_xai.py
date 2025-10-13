@@ -195,7 +195,7 @@ def execute_xai(llm, corpus, target, query, preds, args):
             current = response_final_2["methods_tobe_modified"]
             total.extend(current)
         else:
-            intermediate_steps = response_2['intermediate_steps']
+            intermediate_steps = messages_2[:-1]
             valid = False
             for step in reversed(intermediate_steps):
                 if (step and len(step) >= 1 and hasattr(step[0], 'log') and step[0].log):
@@ -209,7 +209,7 @@ def execute_xai(llm, corpus, target, query, preds, args):
                         break
             if not valid:
                 exception = Exception()
-                exception.response = response_2
+                exception.response = messages_2[:-1]
                 raise exception
                     
     print("original preds: ", json.dumps(preds, indent=4))

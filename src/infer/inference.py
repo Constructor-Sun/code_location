@@ -55,6 +55,17 @@ def load_inference_model(model_name):
                 "max_num_batched_tokens": 80960
             }
         )
+    elif model_name == "qwen3-coder-480b-a35b-instruct":
+        llm = ChatOpenAI(
+            model=model_name,
+            openai_api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            openai_api_key="sk-5368f4efcc9a464ca1a787f011186efa",
+            max_tokens=65536,
+            temperature=0,
+            model_kwargs={"seed": 42},
+            request_timeout=60,
+            max_retries=2 
+        )
     else:
         llm = ChatOpenAI(
             model=model_name,
@@ -127,7 +138,7 @@ def create_agent(llm, corpus, target, args):
         tools=tools_1,
         memory=memory,
         max_iterations=30,
-        verbose=True,
+        # verbose=True,
         handle_parsing_errors=True,
         return_intermediate_steps=True
     )
@@ -143,7 +154,7 @@ def create_agent(llm, corpus, target, args):
         tools=tools_2,
         memory=memory,
         max_iterations=20,
-        verbose=True,
+        # verbose=True,
         handle_parsing_errors=True,
         return_intermediate_steps=True
     )
@@ -256,18 +267,18 @@ def main():
     parser.add_argument("--test_dir", type=str, default="datasets")
     parser.add_argument("--dataset", type=str, default="swe-bench-lite") # loc-agent
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
-    parser.add_argument("--inference_model", type=str, default="x-ai/grok-code-fast-1") 
+    parser.add_argument("--inference_model", type=str, default="qwen3-coder-480b-a35b-instruct") 
     # Qwen/Qwen3-Coder-30B-A3B-Instruct, qwen3-coder-480b-a35b-instruct, x-ai/grok-code-fast-1
     parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--target", type=str, default="instances.json")
     parser.add_argument("--retrieval", type=str, default="embed32-retrieval.json")
-    parser.add_argument("--saving", type=str, default="result.json")
+    parser.add_argument("--saving", type=str, default="result-api.json")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
     args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
-    # args.target = os.path.join(args.test_dir, args.dataset + '-' + args.target)
+    args.target = os.path.join(args.test_dir, args.dataset + '-' + args.target)
     args.retrieval = os.path.join(args.test_dir, args.dataset + '-' + args.retrieval)
-    args.target = os.path.join(args.test_dir, args.target)
+    # args.target = os.path.join(args.test_dir, args.target)
     print("target: ", args.target)
     print("retrieval: ", args.retrieval)
     print("to save in: ", args.saving)
@@ -295,10 +306,10 @@ def main():
         for target in keys:
             if target not in retrieval_dict:
                 continue
-            # if target in results and results[target] is not None and isinstance(results[target], list):
-            #     continue
-            if target != "sympy__sympy-11870":
+            if target in results and results[target] is not None and isinstance(results[target], list):
                 continue
+            # if target != "sympy__sympy-11870":
+            #     continue
 
             if inference_model is None or target_processed_count % RESTART_FREQUENCY == 0:
                 if inference_model is not None:
