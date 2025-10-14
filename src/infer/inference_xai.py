@@ -1,6 +1,6 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 import re
 import gc
 import json
@@ -68,7 +68,10 @@ def execute_xai(llm, corpus, target, query, preds, args):
                 model=args.inference_model,
                 messages=messages,
                 tools=tools,
-                tool_choice="auto"
+                tool_choice="auto",
+                temperature=0,
+                top_p=1.0,
+                seed=42
             ).choices[0].message
             messages.append(response)
         return 
@@ -131,6 +134,9 @@ def execute_xai(llm, corpus, target, query, preds, args):
         messages=messages_1,
         tools=tools_1,
         tool_choice="auto",
+        temperature=0,
+        top_p=1.0,
+        seed=42
     )
     messages_1.append(response.choices[0].message)
     _inner_loop(tools_1, messages_1)
@@ -184,7 +190,12 @@ def execute_xai(llm, corpus, target, query, preds, args):
             messages=messages_2,
             tools=tools_2,
             tool_choice="auto",
+            temperature=0,
+            top_p=1.0,
+            seed=42,
         )
+        if response == None:
+            print("response none here")
         messages_2.append(response.choices[0].message)
         _inner_loop(tools_2, messages_2)
         json_matches = re.findall(r'\{[^{}]*\}', messages_2[-1].content, re.DOTALL)
@@ -199,9 +210,9 @@ def execute_xai(llm, corpus, target, query, preds, args):
             valid = False
             for step in reversed(intermediate_steps):
                 if (step and len(step) >= 1 and hasattr(step[0], 'log') and step[0].log):
-                    json_match = re.search(r'\{.*\}', step[0].log, re.DOTALL)
-                    if json_match:
-                        json_str = json_match.group()
+                    json_matches = re.findall(r'\{[^{}]*\}', step[0].log, re.DOTALL)
+                    if json_matches:
+                        json_str = json_matches[-1]
                         response_final_2 = json.loads(json_str)
                         current = response_final_2["methods_tobe_modified"]
                         total.extend(current)
@@ -237,7 +248,7 @@ def main():
     parser.add_argument("--dataset", type=str, default="swe-bench-lite") # loc-agent
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--inference_model", type=str, default="x-ai/grok-code-fast-1") 
-    # Qwen/Qwen3-Coder-30B-A3B-Instruct, qwen3-coder-480b-a35b-instruct, x-ai/grok-code-fast-1
+    # Qwen/Qwen3-Coder-30B-A3B-Instruct, qwen3-coder-480b-a35b-instruct, x-ai/grok-code-fast-1, openai/gpt-oss-20b
     parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--target", type=str, default="instances.json")
     parser.add_argument("--retrieval", type=str, default="embed32-retrieval.json")
@@ -276,10 +287,10 @@ def main():
         for target in keys:
             if target not in retrieval_dict:
                 continue
-            # if target in results and results[target] is not None and isinstance(results[target], list):
-            #     continue
-            if target != "sympy__sympy-11870":
+            if target in results and results[target] is not None and isinstance(results[target], list):
                 continue
+            # if target != "sympy__sympy-11870":
+            #     continue
 
             if inference_model is None or target_processed_count % RESTART_FREQUENCY == 0:
                 if inference_model is not None:

@@ -19,7 +19,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--test_dir", type=str, default="datasets")
     parser.add_argument("--dataset", type=str, default="swe-bench-lite")
-    parser.add_argument("--saving", type=str, default="result-sample.json") # rank32-retrieval, result-api
+    parser.add_argument("--saving", type=str, default="embed32-retrieval.json") # rank32-retrieval, result-api
     args = parser.parse_args()
     args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
     if args.dataset == "swe-bench-lite":

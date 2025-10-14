@@ -35,7 +35,7 @@ Step 5: Identify Target methods for Modification
 - get_functions Format: '{{"func_paths": []}}'
 - get_class Format: '{{"class_path": ''}}'
 - list_function_directory Format : '{{"file_path": ''}}'
-- get_file Format: '{{"target_function": ''}}'
+- get_file Format: '{{"file_path": ''}}'
 
 ## Final Answer Format:
 - You should return a valid JSON string with key "updated_methods", whose value should include exactly 10 methods or module-level functions
@@ -71,10 +71,10 @@ Step 3: Identify Feasible Methods to Be Modified
 - Assume the root cause resides within the same files as the original candidates ({scope}), then find the most appropriate modification methods.
 - All methods or module-level functions MUST be in these files ONLY: {scope}. If a potential method is not in {scope}, discard it immediately and select an alternative from {scope}.
 - You MUST return methods or module-level functions ONLY. Never return a class name, even if original candidates include class names.
-- Aim for at least 4 methods, all with complete paths, exclusively from {scope}.
+- Aim for exactly 4 methods, all with complete paths, exclusively from {scope}.
 
 Step 4: Validation Check
-- Review your identified methods: For each one, confirm it is defined in {scope}. If ANY method is from outside {scope}, replace it with a valid one from {scope} or explain why no alternative exists (but still provide at least 4 valid ones).
+- Review your identified methods: For each one, confirm it is defined in {scope}. If ANY method is from outside {scope}, replace it with a valid one from {scope} or explain why no alternative exists (but still provide exactly 4 valid ones).
 
 Example of Correct Output:
 Suppose {scope} = ['file1.py', 'file2.py'], and methods must be from there.
@@ -84,11 +84,11 @@ Incorrect (do NOT do this): ["external.py:func_x"] - this would violate the rule
 ## Tool Calls Input:
 - get_functions Format: '{{"func_paths": []}}'
 - get_class Format: '{{"class_path": ''}}'
-- get_file Format: '{{"target_function": ''}}'
+- get_file Format: '{{"file_path": ''}}'
 
 ## Final Answer Format:
 - You should only return a valid JSON string with keys "main_idea" and "methods_tobe_modified".
-- "methods_tobe_modified" MUST include at least 4 methods with complete paths, ALL of them from {scope} ONLY. Double-check this before outputting.
+- "methods_tobe_modified" MUST include exactly 4 methods with complete paths, ALL of them from {scope} ONLY. Double-check this before outputting.
 - Final Answer:{{
     "main_idea": "",
     "methods_tobe_modified": []

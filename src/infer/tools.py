@@ -51,7 +51,7 @@ class GetFunctionsInput(BaseModel):
     )
 
 class GetClassInput(BaseModel):
-    func_paths: str = Field(
+    class_path: str = Field(
         ...,
         description="""
             Reveal targeted class contents.
@@ -90,7 +90,7 @@ class ListFunctionDirectoryInput(BaseModel):
     )
 
 class GetCallGraphInput(BaseModel):
-    params: str = Field(
+    target_function: str = Field(
         ...,
         description="""
             Reveal the call graph of target function within its directory.
@@ -489,7 +489,6 @@ def _get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_func
     
 def get_call_graph(corpus_dist: Dict[str, str], instance_path: str, target_function: str) -> str:
     try:
-        print("target_function: ", target_function)
         target_function = get_valid_json(target_function)
         target = json.loads(target_function)["target_function"]
         return _get_call_graph(

@@ -267,18 +267,18 @@ def main():
     parser.add_argument("--test_dir", type=str, default="datasets")
     parser.add_argument("--dataset", type=str, default="swe-bench-lite") # loc-agent
     parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
-    parser.add_argument("--inference_model", type=str, default="qwen3-coder-480b-a35b-instruct") 
+    parser.add_argument("--inference_model", type=str, default="Qwen/Qwen3-Coder-30B-A3B-Instruct") 
     # Qwen/Qwen3-Coder-30B-A3B-Instruct, qwen3-coder-480b-a35b-instruct, x-ai/grok-code-fast-1
     parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--target", type=str, default="instances.json")
     parser.add_argument("--retrieval", type=str, default="embed32-retrieval.json")
-    parser.add_argument("--saving", type=str, default="result-api.json")
+    parser.add_argument("--saving", type=str, default="Qwen3-A30.json")
     args = parser.parse_args()
     os.makedirs("tmp", exist_ok=True)
     args.saving = os.path.join(args.test_dir, args.dataset + '-' + args.saving)
-    args.target = os.path.join(args.test_dir, args.dataset + '-' + args.target)
+    # args.target = os.path.join(args.test_dir, args.dataset + '-' + args.target)
     args.retrieval = os.path.join(args.test_dir, args.dataset + '-' + args.retrieval)
-    # args.target = os.path.join(args.test_dir, args.target)
+    args.target = os.path.join(args.test_dir, args.target)
     print("target: ", args.target)
     print("retrieval: ", args.retrieval)
     print("to save in: ", args.saving)
@@ -298,6 +298,7 @@ def main():
     inference_model = None # 初始化为 None
     RESTART_FREQUENCY = 10
     target_processed_count = 0 
+    count = 0
     with open(args.target, 'r', encoding='utf-8') as f:
         data = json.load(f)
         keys = list(data.keys())
@@ -306,10 +307,10 @@ def main():
         for target in keys:
             if target not in retrieval_dict:
                 continue
-            if target in results and results[target] is not None and isinstance(results[target], list):
-                continue
-            # if target != "sympy__sympy-11870":
+            # if target in results and results[target] is not None and isinstance(results[target], list):
             #     continue
+            if target != "pydata__xarray-4493":
+                continue
 
             if inference_model is None or target_processed_count % RESTART_FREQUENCY == 0:
                 if inference_model is not None:
@@ -332,7 +333,7 @@ def main():
 
             while retries < max_retries and answer is None:
                 signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(300)
+                signal.alarm(420)
                 try:
                     answer = execute(inference_model, target, query, preds, args)
                     signal.alarm(0)
@@ -374,6 +375,10 @@ def main():
             with open(args.saving, 'w', encoding='utf-8') as save_file:
                 json.dump(results, save_file, indent=2, ensure_ascii=False)
             print(f"Saved result for {target}")
+
+            count += 1
+            if count == 30:
+                break
 
 if __name__ == "__main__":
     main()
