@@ -11,7 +11,7 @@ trash/
 saved_models/
 Salesforce/
 test_index/
-datasets/
+datasets/*
 swe-bench-lite/
 tmp/
 
