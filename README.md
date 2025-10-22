@@ -1,5 +1,7 @@
 # Retriever-Agent vs. Retriever-Reranker: Replacing the Backend for Issue Localization
 
+Report available: [Notion](https://www.notion.so/Retriever-Agent-vs-Retriever-Reranker-Replacing-the-Backend-for-Issue-Localization-28b1c8b9cb3780e0b186e40e3062c16a?pvs=73)
+
 ## Dataset Preparation
 
 Download the `SWE-Bench-Lite` dataset from [HuggingFace](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Lite).
