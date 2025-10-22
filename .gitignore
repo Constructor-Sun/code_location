@@ -12,10 +12,6 @@ saved_models/
 Salesforce/
 test_index/
 datasets/*
-swe-bench-lite/
-tmp/
-
-# execption
 !datasets/all_failed_analysis.json
 !datasets/classification.json
 !datasets/instances.json
@@ -25,6 +21,8 @@ tmp/
 !datasets/swe-bench-lite-result-Qwen3-30B-subset.json
 !datasets/swe-bench-lite-result-xai-subset.json
 !datasets/swe-bench-lite-subset-summary.json
+swe-bench-lite/
+tmp/
 
 # do not include data files
 *.log
