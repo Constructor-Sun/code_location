@@ -1,0 +1,8 @@
+import json
+
+test_list = ['scikit-learn__scikit-learn-14983', 'pytest-dev__pytest-7220', 'django__django-15252', 'sympy__sympy-21612', 'sympy__sympy-12419', 'sympy__sympy-23262', 'scikit-learn__scikit-learn-15535', 'django__django-11422', 'django__django-13158', 'django__django-15320', 'pytest-dev__pytest-7490', 'scikit-learn__scikit-learn-25500', 'sympy__sympy-11870', 'pydata__xarray-4493', 'sympy__sympy-13895', 'sympy__sympy-13146', 'pydata__xarray-4248', 'sympy__sympy-12236', 'sympy__sympy-20322', 'django__django-11797', 'sympy__sympy-14024', 'sympy__sympy-23117', 'django__django-16820', 'django__django-16229', 'django__django-13265', 'django__django-17087', 'django__django-14997', 'sympy__sympy-11897', 'sympy__sympy-18698', 'matplotlib__matplotlib-23299', 'matplotlib__matplotlib-25433', 'sympy__sympy-18087', 'django__django-12284', 'sphinx-doc__sphinx-8627', 'sympy__sympy-21379', 'sympy__sympy-21627', 'django__django-15738', 'matplotlib__matplotlib-25079', 'sympy__sympy-16792', 'sympy__sympy-13031', 'pytest-dev__pytest-5413', 'mwaskom__seaborn-2848', 'django__django-12125', 'django__django-11001', 'sympy__sympy-13915', 'sympy__sympy-15609']
+test_dict = {}
+for example in test_list:
+    test_dict[example] = ""
+with open('datasets/instances.json', 'w', encoding='utf-8') as f:
+    json.dump(test_dict, f, ensure_ascii=False, indent=4)

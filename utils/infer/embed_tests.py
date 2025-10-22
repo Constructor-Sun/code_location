@@ -1,5 +1,6 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 import time
 import json
 import argparse
@@ -19,9 +20,9 @@ def get_filenames_in_dir(directory_path):
 def get_example_names(dataset_path, dataset):
     folder_names = []
     if dataset == "swe-bench-lite":
-        failed_file = "swebench_missed_instances.json"
+        failed_file = "swe-bench-lite-instances.json"
     elif dataset == "loc-bench":
-        failed_file = "locbench_missed_instances.json"
+        failed_file = "loc-bench-instances.json"
     else:
         raise KeyError("no matched dataset!")
     failed_path = os.path.join(dataset_path, failed_file)
@@ -91,7 +92,7 @@ def embed_item_single_process(dataset_path, item, save_dir, tokenizer, model, ba
         torch.save(saving, os.path.join(save_dir, item + ".pt"))
 
 def process_chunk(dataset_path, items, save_dir, tokenizer, model, device_id, batch_size):
-    device = torch.device(f"cuda:{device_id + 1}" if torch.cuda.is_available() else "cpu")
+    device = torch.device(f"cuda:{device_id}" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     model.eval()
     
@@ -102,15 +103,16 @@ def process_chunk(dataset_path, items, save_dir, tokenizer, model, device_id, ba
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_dir", type=str, default="datasets")
-    parser.add_argument("--dataset", type=str, default="loc-bench")
+    parser.add_argument("--dataset", type=str, default="swe-bench-lite")
     parser.add_argument("--save_dir", type=str, default="test_index")
-    parser.add_argument("--num_processes", type=int, default=3)
+    parser.add_argument("--num_processes", type=int, default=4)
     parser.add_argument("--model_path", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--batch_size", type=int, default=32)
     args = parser.parse_args()
 
     dataset_path = os.path.join(args.dataset_dir)
     test_items = get_example_names(dataset_path, args.dataset)
+    print("test_items: ", len(test_items))
     existing_set = set(get_filenames_in_dir(args.save_dir))
     test_items = [f for f in test_items if f not in existing_set]
 
@@ -132,8 +134,8 @@ def main():
     for i in range(num_processes):
         # independent tokenizer and model for each process
         print("Using: ", args.model_path)
-        tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
-        model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+        model = AutoModel.from_pretrained(args.model_path)
         
         # create processes
         p = mp.Process(
