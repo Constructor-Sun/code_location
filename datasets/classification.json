@@ -1,0 +1,27 @@
+{
+    "Superficial\nCausal Analysis": {
+        "sympy__sympy-21612":"file 0",
+        "sympy__sympy-21627":"file 0",
+        "sympy__sympy-18087":"file 0",
+        "sympy__sympy-12236":"file 0",
+        "sympy__sympy-13031":"file 0",
+        "django__django-14997":"file 0",
+        "sympy__sympy-13146":"file 0",
+        "pytest-dev__pytest-7220":"class 0",
+        "sympy__sympy-20322":"file 0",
+        "matplotlib__matplotlib-25433":"file 0",
+        "django__django-11797":"class 0",
+        "sympy__sympy-21379":"class 0"
+    },
+    "Suboptimal Solution": {
+        "django__django-13158":"class 1",
+        "pydata__xarray-4248":"class 0",
+        "sympy__sympy-13915":"class 1",
+        "sympy__sympy-11897":"class 1",
+        "django__django-15738":"class 1"
+    },
+    "Inconsistency": {
+        "sympy__sympy-14024":"",
+        "sympy__sympy-23117":""
+    }
+}

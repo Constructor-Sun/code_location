@@ -11,16 +11,7 @@ trash/
 saved_models/
 Salesforce/
 test_index/
-datasets/*
-!datasets/all_failed_analysis.json
-!datasets/classification.json
-!datasets/instances.json
-!datasets/swe-bench-lite-embed32-retrieval.json
-!datasets/swe-bench-lite-rank32-retrieval.json
-!datasets/swe-bench-lite-result-api-subset.json
-!datasets/swe-bench-lite-result-Qwen3-30B-subset.json
-!datasets/swe-bench-lite-result-xai-subset.json
-!datasets/swe-bench-lite-subset-summary.json
+datasets/**
 swe-bench-lite/
 tmp/
 
@@ -37,3 +28,13 @@ logs/
 *.gv
 *.gv.*
 *.env
+
+!datasets/all_failed_analysis.json
+!datasets/classification.json
+!datasets/instances.json
+!datasets/swe-bench-lite-embed32-retrieval.json
+!datasets/swe-bench-lite-rank32-retrieval.json
+!datasets/swe-bench-lite-result-api-subset.json
+!datasets/swe-bench-lite-result-Qwen3-30B-subset.json
+!datasets/swe-bench-lite-result-xai-subset.json
+!datasets/swe-bench-lite-subset-summary.json

@@ -1,0 +1,79 @@
+{
+    "total intersections": {
+        "sympy__sympy-21612":"This issue is about missing brackets in latex expression. The LLM focuses on _parse_latex_antlr module or the LaTeXParser class, which is directly related to Latex parsing. However, this issue is related to latex printing rather than parsing. In fact, the _parse_latex_antlr module has included StrPrinter (the final answer) but is not further checked by LLM.",
+        "django__django-13158":"This issue is about an unexpected behavior when using QuerySet.union function. Human experts find out that it can trace back to incomplete cloning of union query states in Query.clone and improper internal structure cleanup in Query.set_empty. The LLM does not trace the cause to such depth.",
+        "pydata__xarray-4248":"The issue is the absence of unit information for coordinates and data variables in the xarray Dataset representation. Human experts chose to modify inline_variable_array_repr because it is the single function responsible for generating the concise, one-line representation for every variable (both coordinates and data variables) in the core text repr.",
+        "sympy__sympy-11897":"This issue is about LaTex printer failing to give consistent outputs when input is the same. The LLM focuses on individual printing methods in the LatexPrinter class. However, human experts fix it by adding a conditional statement in function _needs_mul_brackets to solve it from the source.",
+        "sympy__sympy-14024":"This issue is about SymPy using an incorrect conversion formula when both the base and the exponent are negative and should be converted to a form with positive ones. While the LLM has found one of the correct classes (Integer) to be modified, the same incorrect conversion formula still exists in another class (Rational), which is not mentioned in the problem statement but should also be fixed to ensure overall consistency in the entire project.",
+        "sympy__sympy-20322":"This issue is about inconsistent behavior for simplify with ceiling. The LLM tries to fix it directly in the simplify function or the ceiling class. However, human experts change the scanning logic in Mul class to prevent this.",
+        "sympy__sympy-21627":"This issue is about an maximum recursion depth error. The LLM tries to fix it in every element (cosh, acos) in the problem statement example, but the true error lies in the Abs class, which is not directly mentioned in the problem statement.",
+        "sympy__sympy-18087":"This issue is about a wrong result when using trigsimp and simplify. However, the true reason is an invalid simplification in exprtools.Factors. The LLM tries to fix it directly in the mentioned functions (trigsimp) but does not find the real reason.",
+        "django__django-11797":"This issue is about incorrect overridding of GROUP BY clause when applying a filter on a grouped query. Human experts decided to fix it in a SQL preprocessing function rather than directly handle it in most related SQLCompiler or Query class.",
+        "sympy__sympy-12236":"This issue is about apart function producing a wrong result when given multivariate polynomial with fractional coefficients in a result. The LLM tries to directly fix it in the apart functions. However, the real reason is that the domain wasn't properly converted to a field. Hence, human experts fix the function of field conversion.",
+        "django__django-14997":"This issue is about incorrect overridding of SELECT clasues. Similar to django__django-11797, human experts decided to fix it in a preprocess function, which handles table reference renaming.",
+        "sympy__sympy-13031":"This issue is about inconsistency of matrix hstack and vstack behavior in different version. The LLM tries to directly fix it in hstack or vstack. Human experts point out that this issue occurs when the given matrix is sparse, and thus fix col_join and row_join methods in the MutableSparseMatrix class.",
+        "sympy__sympy-13915":"This issue is about a substitution in SymPy leadding to an incorrect value. The true reason is that the Mul operation incorrectly cancels out terms involving complex infinity. The LLM, on the contrary, tries to fix it directly in basic subs operation, which is correlated to an example in the problem statement.",
+        "sympy__sympy-23117":"This issue is about SymPy cannot construct empty Array instance. While LLM successfully finds the key function to be modified, it forgets to modify another two seemingly irrelevant functions to ensure consistent behavior across all array operations.",
+        "sympy__sympy-13146":"This issue is about incomplete simplification of an exponent expression. The real reason is that float is stored as an approximate binary floating-point value (e.g., 2.5 -> 2.5000000000000001), and thus is not equal to an exact symbolic expression. Human experts decided to fix it in AssocOp._eval_evalf, where numerical evaluation occurs, to add a specified precision tolerance.",
+        "django__django-15738":"This issue is about an unexecpted migration failure handled by MigrationAutodetector. Although LLM successfully detects this class, it fails to fix this issue at the 'new field adding stage', but chooses to alter an existing one.",
+        "pytest-dev__pytest-7220":"This issue is about wrong path to test file when directory changed in fixture function. Human experts decided to fix it in Node._repr_failure_py, which is responsible for generating the representation of failed tests. The LLM does not show a focus on which function to fix.",
+        "sympy__sympy-21379":"This issue is about an unexpected PolynomialError when using simple subs() for particular expressions. Human experts catch PolynomialError that may arise from calling gcd in mod, and use 1 as the gcd for the correct expression. However, the LLM decided to fix it in the Piecewise class.",
+        "matplotlib__matplotlib-25433":"This issue is that RangeSlider on_changed blocks input to re-added widgets after figure clear, but Button on_clicked works. LLM decided to fix it in relevant classes (RangeSlider, Button, Widget), while human experts fix it in FigureBase.delaxes, which handles cleanup of axis resources, to prevent stale event handlers from blocking inputs to newly created widgets."
+    },
+    "ref_unique_qwen_30B": {
+        "mwaskom__seaborn-2848":"40. This issue is about a seaborn library bug where creating a multi-plot grid fails when you try to filter certain categories from your data using the hue_order parameter.",
+        "pydata__xarray-4493":"-1",
+        "sympy__sympy-11870":"89",
+        "sympy__sympy-12419":"83",
+        "scikit-learn__scikit-learn-25500":"58"
+    },
+    "qwen_30B_unique": {
+        "sympy__sympy-13895":"71",
+        "django__django-16820":"41",
+        "django__django-13265":"87",
+        "django__django-11001":"87",
+        "django__django-12125":"88",
+        "sympy__sympy-16792":"75",
+        "sympy__sympy-15609":"68"
+    },
+    "ref_unique_qwen_480B": {
+        "sympy__sympy-18698":"71",
+        "sphinx-doc__sphinx-8627":"49",
+        "scikit-learn__scikit-learn-25500":"58",
+        "django__django-17087":"-1",
+        "mwaskom__seaborn-2848":"40",
+        "pydata__xarray-4493":"-1",
+        "sympy__sympy-12419":"83"
+    },
+    "qwen_480B_unique": {
+        "sympy__sympy-13895":"71",
+        "django__django-16820":"41",
+        "matplotlib__matplotlib-23299":"81",
+        "django__django-12284":"58",
+        "django__django-13265":"83",
+        "django__django-12125":"88"
+    },
+    "ref_unique_xai": {
+        "matplotlib__matplotlib-25079":"",
+        "sympy__sympy-18698":"",
+        "django__django-16229":""
+    },
+    "xai_unique": {
+        "django__django-15252":"",
+        "pytest-dev__pytest-7490":"",
+        "sympy__sympy-13895":"",
+        "django__django-16820":"",
+        "scikit-learn__scikit-learn-15535":"",
+        "django__django-12125":"",
+        "scikit-learn__scikit-learn-14983":"",
+        "django__django-11422":"",
+        "sympy__sympy-16792":"",
+        "sympy__sympy-15609":""
+    },
+    "mean": {
+        "ref_unique_qwen_30B": 53.8,
+        "qwen_30B_unique": 73.86,
+        "ref_unique_qwen_480B": 42.71,
+        "qwen_480B_unique": 70.33
+    }
+}
