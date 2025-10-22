@@ -14,7 +14,6 @@ from functools import partial
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_community.llms import VLLM
 from langchain_community.chat_models import ChatOpenAI
-from langchain_xai import ChatXAI
 from langchain.memory import ConversationBufferMemory
 from langchain.tools import StructuredTool
 from langchain_core.prompts import PromptTemplate
@@ -55,22 +54,12 @@ def load_inference_model(model_name):
                 "max_num_batched_tokens": 80960
             }
         )
-    elif model_name == "qwen3-coder-480b-a35b-instruct":
-        llm = ChatOpenAI(
-            model=model_name,
-            openai_api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            openai_api_key="sk-5368f4efcc9a464ca1a787f011186efa",
-            max_tokens=65536,
-            temperature=0,
-            model_kwargs={"seed": 42},
-            request_timeout=60,
-            max_retries=2 
-        )
+    # elif model_name == "qwen3-coder-480b-a35b-instruct":
     else:
         llm = ChatOpenAI(
             model=model_name,
-            openai_api_base="https://openrouter.ai/api/v1", # "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            openai_api_key="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", # "sk-5368f4efcc9a464ca1a787f011186efa",
+            openai_api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            openai_api_key=os.getenv("ALIYUN_API_KEY"),
             max_tokens=65536,
             temperature=0,
             model_kwargs={"seed": 42},
@@ -266,10 +255,10 @@ def main():
     parser.add_argument("--embed_dir", type=str, default="test_index")
     parser.add_argument("--test_dir", type=str, default="datasets")
     parser.add_argument("--dataset", type=str, default="swe-bench-lite") # loc-agent
-    parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
+    # parser.add_argument("--retrieval_model", type=str, default="Salesforce/SweRankEmbed-Large")
     parser.add_argument("--inference_model", type=str, default="Qwen/Qwen3-Coder-30B-A3B-Instruct") 
     # Qwen/Qwen3-Coder-30B-A3B-Instruct, qwen3-coder-480b-a35b-instruct, x-ai/grok-code-fast-1
-    parser.add_argument("--top_k", type=int, default=10)
+    # parser.add_argument("--top_k", type=int, default=10)
     parser.add_argument("--target", type=str, default="instances.json")
     parser.add_argument("--retrieval", type=str, default="embed32-retrieval.json")
     parser.add_argument("--saving", type=str, default="Qwen3-A30.json")

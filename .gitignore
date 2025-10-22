@@ -27,3 +27,4 @@ logs/
 *.zip.*
 *.gv
 *.gv.*
+*.env

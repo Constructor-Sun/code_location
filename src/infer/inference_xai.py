@@ -1,6 +1,6 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 import re
 import gc
 import json
@@ -11,13 +11,7 @@ import time
 import numpy as np
 import torch
 from functools import partial
-from langchain.agents import AgentExecutor, create_react_agent
 from langchain_community.llms import VLLM
-# from langchain_community.chat_models import ChatOpenAI
-from langchain.memory import ConversationBufferMemory
-from langchain.tools import StructuredTool
-from langchain_core.prompts import PromptTemplate
-from langchain.prompts import PromptTemplate
 from openai import OpenAI
 
 from retrieval import retrieve_batch
@@ -39,7 +33,7 @@ def set_global_seed(seed=42):
 def load_inference_model(model_name):
     llm = OpenAI(
         base_url="https://openrouter.ai/api/v1",
-        api_key="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",
+        api_key=os.getenv("OPENROUTER_API_KEY"),
     )
     return llm
 
@@ -276,7 +270,7 @@ def main():
 
     # execute
     # inference_model = load_inference_model(args.inference_model)
-    inference_model = None # 初始化为 None
+    inference_model = None
     RESTART_FREQUENCY = 10
     target_processed_count = 0 
     with open(args.target, 'r', encoding='utf-8') as f:
@@ -299,7 +293,7 @@ def main():
                     gc.collect()
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                    time.sleep(5) # 增加延迟等待资源完全释放
+                    time.sleep(5)
                 
                 inference_model = load_inference_model(args.inference_model) 
 
