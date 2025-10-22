@@ -15,6 +15,17 @@ datasets/
 swe-bench-lite/
 tmp/
 
+# execption
+!datasets/all_failed_analysis.json
+!datasets/classification.json
+!datasets/instances.json
+!datasets/swe-bench-lite-embed32-retrieval.json
+!datasets/swe-bench-lite-rank32-retrieval.json
+!datasets/swe-bench-lite-result-api-subset.json
+!datasets/swe-bench-lite-result-Qwen3-30B-subset.json
+!datasets/swe-bench-lite-result-xai-subset.json
+!datasets/swe-bench-lite-subset-summary.json
+
 # do not include data files
 *.log
 *.log.*
