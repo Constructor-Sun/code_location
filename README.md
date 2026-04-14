@@ -1,5 +1,7 @@
 # Retriever-Agent vs. Retriever-Reranker: Replacing the Backend for Issue Localization
 
+> This repository represents an early-stage, exploratory attempt at code localization. While the engineering pipeline was fully implemented, the empirical results proved to be suboptimal and did not meet initial expectations.
+
 Report available: [Notion](https://www.notion.so/Retriever-Agent-vs-Retriever-Reranker-Replacing-the-Backend-for-Issue-Localization-28b1c8b9cb3780e0b186e40e3062c16a?pvs=73)
 
 ## Dataset Preparation
